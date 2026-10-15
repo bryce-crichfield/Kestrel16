@@ -236,7 +236,13 @@ add_custom_target(programs ALL DEPENDS ${PROGRAM_BINARIES})
 enable_testing()
 foreach(binary ${PROGRAM_BINARIES})
     get_filename_component(name ${binary} NAME_WE)
-    add_test(NAME program_${name} COMMAND Emulator ${binary})
+    if(name STREQUAL "Shell_c")
+        continue()  # reads commands; tested below with some typed in
+    endif()
+    # Through RunWithInput so stdin is an empty file: reading the UART status must not wait on
+    # whatever stdin ctest hands down.
+    add_test(NAME program_${name} COMMAND ${CMAKE_COMMAND} "-DCOMMAND=$<TARGET_FILE:Emulator>;${binary}"
+             -DINPUT= -DOUTPUT_DIRECTORY=${CMAKE_BINARY_DIR}/${name} -P ${CMAKE_SOURCE_DIR}/Tests/RunWithInput.cmake)
     set_tests_properties(program_${name} PROPERTIES FAIL_REGULAR_EXPRESSION "illegal instruction;step limit")
 endforeach()
 
@@ -245,16 +251,28 @@ add_test(NAME application_self_test COMMAND Application --self-test)
 # The machine's components (ALU, ...) against the emulator.
 add_test(NAME hardware_check COMMAND Application --components ${CMAKE_SOURCE_DIR}/Components --check-hardware)
 
-# The compiled Fibonacci on the gate-level machine, through the headless --run mode.
-if(TARGET simulate_Fibonacci_c)
-    add_test(NAME simulate_Fibonacci_c COMMAND Application --components ${CMAKE_SOURCE_DIR}/Components
-             --run "Kestrel16 Computer" --program ${CMAKE_SOURCE_DIR}/Programs/Fibonacci.c)
-    set_tests_properties(simulate_Fibonacci_c PROPERTIES PASS_REGULAR_EXPRESSION "28657 46368" TIMEOUT 600)
+# What each program prints. The ones also listed in GATE_LEVEL_TESTS run on the gate-level
+# computer too, which has to print the same.
+set(EXPECTED_Fibonacci_c "28657 46368")
+set(EXPECTED_Shifts_c "3EFE 1CA6")     # every shift amount, byte and word stores
+set(EXPECTED_Interrupts "1FE4 0708")   # timer interrupts landing on every kind of instruction
+# The shell reads commands: type a couple in, and --run stops once they run out.
+if(EXISTS ${CMAKE_SOURCE_DIR}/Programs/Shell.c)
+    add_test(NAME program_Shell_c COMMAND ${CMAKE_COMMAND} "-DCOMMAND=$<TARGET_FILE:Emulator>;--run;${PROGRAM_OUTPUT_DIR}/Shell_c.bin"
+             "-DINPUT=calc 7 * 6|rev Kestrel|" -DOUTPUT_DIRECTORY=${CMAKE_BINARY_DIR}/Shell_c
+             -P ${CMAKE_SOURCE_DIR}/Tests/RunWithInput.cmake)
+    set_tests_properties(program_Shell_c PROPERTIES PASS_REGULAR_EXPRESSION "42.*lertseK")
 endif()
-
-if(TEST program_Fibonacci)
-    set_tests_properties(program_Fibonacci PROPERTIES PASS_REGULAR_EXPRESSION "28657 46368")
-endif()
-if(TEST program_Fibonacci_c)
-    set_tests_properties(program_Fibonacci_c PROPERTIES PASS_REGULAR_EXPRESSION "28657 46368")
-endif()
+set(GATE_LEVEL_TESTS Fibonacci_c Shifts_c Interrupts)
+foreach(name Fibonacci_c Shifts_c Interrupts)
+    if(TEST program_${name})
+        set_tests_properties(program_${name} PROPERTIES PASS_REGULAR_EXPRESSION "${EXPECTED_${name}}")
+    endif()
+endforeach()
+foreach(name ${GATE_LEVEL_TESTS})
+    if(TEST program_${name})
+        add_test(NAME simulate_${name} COMMAND Application --components ${CMAKE_SOURCE_DIR}/Components
+                 --run "Kestrel16 Computer" --program ${PROGRAM_OUTPUT_DIR}/${name}.bin)
+        set_tests_properties(simulate_${name} PROPERTIES PASS_REGULAR_EXPRESSION "${EXPECTED_${name}}" TIMEOUT 600)
+    endif()
+endforeach()
