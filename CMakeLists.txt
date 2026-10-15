@@ -187,6 +187,8 @@ endforeach()
 # Every Programs/*.c is compiled to Build/Programs/<name>.s, then assembled into
 # Binary/Programs/<name>_c.bin (the _c keeps it apart from a <name>.s of the same name).
 file(GLOB C_PROGRAM_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/Programs/*.c)
+# Any header change rebuilds every C program (the compiler does not report its includes).
+file(GLOB C_PROGRAM_HEADERS CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/Programs/*.h)
 set(C_PROGRAM_ASM_DIR ${CMAKE_BINARY_DIR}/Programs)
 
 foreach(source ${C_PROGRAM_SOURCES})
@@ -198,7 +200,7 @@ foreach(source ${C_PROGRAM_SOURCES})
         OUTPUT ${assembly}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${C_PROGRAM_ASM_DIR}
         COMMAND $<TARGET_FILE:Compiler> -o ${assembly} ${source}
-        DEPENDS ${source} Compiler
+        DEPENDS ${source} ${C_PROGRAM_HEADERS} Compiler
         COMMENT "Compiling ${name}.c"
         VERBATIM
     )

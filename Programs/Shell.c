@@ -3,13 +3,10 @@
 // Build:  ./isa16cc shell.c && ./isa16asm shell.s
 // Run:    ./isa16 -n 0 shell.bin       (-n 0 = no step limit, it waits for input)
 //
-// Talks to the UART at 0xFF00 (data) / 0xFF02 (status, bit0 = byte ready).
-// No preprocessor in isa16cc, so constants are enums.
+// Talks to the UART; the constants and declarations are in Shell.h.
 
-enum { RX_READY = 1, LINE_MAX = 80, MAX_ARGS = 8, SIEVE_MAX = 1000 };
+#include "Shell.h"
 
-unsigned *uart_data = (unsigned *)0xFF00;
-unsigned *uart_status = (unsigned *)0xFF02;
 char *hexdigits = "0123456789ABCDEF";
 
 char line[LINE_MAX];
@@ -22,7 +19,7 @@ int commandCount = 0;
 
 void putch(int c)
 {
-    *uart_data = c;
+    *UART_DATA = c;
 }
 
 void print(char *s)
@@ -32,9 +29,9 @@ void print(char *s)
 
 int getch(void)
 {
-    while (!(*uart_status & RX_READY))
+    while (!(*UART_STATUS & RX_READY))
         ;
-    return *uart_data & 255;
+    return *UART_DATA & 255;
 }
 
 int readline(char *buf, int max)
@@ -137,8 +134,6 @@ int need_num(char *s, int *out)
 }
 
 // ---------------------------------------------------------------- commands
-
-void cmd_help(int argc, char **argv);
 
 void cmd_echo(int argc, char **argv)
 {
@@ -287,12 +282,6 @@ void cmd_exit(int argc, char **argv)
     print("bye\n");
     running = 0;
 }
-
-struct Command {
-    char *name;
-    void (*run)(int, char **);
-    char *help;
-};
 
 struct Command commands[] = {
     {"help",   cmd_help,   "list commands"},
