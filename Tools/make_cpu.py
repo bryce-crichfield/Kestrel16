@@ -7,6 +7,7 @@ Parts (each its own component, most of them a familiar 74HC chip or two):
     Bus Driver 8 / 16   tri-state buffers with one /OE (74HC541)
     Mux 2x4             four 2-input multiplexers with one select (74HC157)
     Counter 4 / 16      loadable down-counters (74HC193)
+    Program Counter     PC: a register that also counts up by 2 (74HC161s), so fetching needs no ALU
     Shifter 16          a barrel shifter: SHL, SHR or SAR by 0-15 in one pass, from Mux 2x4s
     Immediate Unit      the instruction's constants, one at a time onto the Y bus
     Status              the flags Z N C V, the interrupt enable, and their copies saved on an exception
@@ -15,8 +16,12 @@ Parts (each its own component, most of them a familiar 74HC chip or two):
     Timer               the emulator's 0xFF04: an interrupt every N instructions
     ISA16 Computer      the CPU, two 32K x 8 RAMs (even and odd bytes), the Terminal and the Timer
 
-The CPU is multi-cycle. Every instruction starts with FETCH (IR <- memory[PC] while the ALU makes
-PC + 2), then takes one to three more cycles. Shifts go through the barrel shifter in one cycle.
+The CPU is multi-cycle. An instruction is fetched (IR <- memory[PC], PC += 2 in the Program Counter)
+and then takes one to three more cycles. Fetching overlaps execution: when an instruction's last
+cycle leaves the memory bus and PC alone (ALU ops, immediates, shifts, compares, branches not taken)
+that cycle also fetches the next instruction, so those instructions take one cycle. Loads, stores,
+jumps, taken branches and EI/DI/RETI/TRAP are followed by a FETCH cycle of their own. Shifts go
+through the barrel shifter in one cycle.
 A store's write cycle drives the address and data while CLK is high and pulses /WE while it is low,
 so /WE ends at the rising edge, before the address can change.
 """
@@ -77,6 +82,35 @@ def make_counter(bits):
     upper_zero = b.gate1('Not', 7, upper)
     b.wire(b.gate2('And', 7, upper_zero, '%d./Q' % flip_flops[0]), zero_output)
     b.wire(b.gate2('And', 7, upper_zero, q[0]), one_output)
+    b.save()
+
+
+def make_program_counter():
+    b = Builder('Program Counter',
+                'PC: a 16-bit register that can also count. On the rising edge of CLK it loads D if /LOAD is 0, '
+                'otherwise adds 2 if INC is 1 (bit 0 stays as it is), otherwise keeps its value. Two tri-state '
+                'read ports like Register 16\'s: QA while /OEA is 0, QB while /OEB is 0. In 74HC terms: four '
+                '74HC161 counters for bits 1-15 plus a flip-flop for bit 0, and four 74HC541s.')
+    d = b.bus_input('D', 16)
+    load, increment, clock = b.input('/LOAD'), b.input('INC'), b.input('CLK')
+    read_a, read_b = b.input('/OEA'), b.input('/OEB')
+    take = b.gate1('Not', 1, load)
+    outputs = {port: b.bus_output(port, 16, 6 if port == 'QA' else 7) for port in ('QA', 'QB')}
+    carry = increment
+    for i in range(16):
+        flip_flop = b.gate('FlipFlop', 4)
+        q = '%d.Q' % flip_flop
+        counted = q
+        if i > 0:  # a bit flips when every bit from 1 up to it is 1
+            counted = b.gate2('Xor', 2, q, carry)
+            carry = b.gate2('And', 2, carry, q)
+        b.wire(b.mux(3, counted, d[i], take, load), '%d.D' % flip_flop)
+        b.wire(clock, '%d.CLK' % flip_flop)
+        for port, enable in (('QA', read_a), ('QB', read_b)):
+            buffer = b.gate('TriState', 5)
+            b.wire(q, '%d.A' % buffer)
+            b.wire(enable, '%d./OE' % buffer)
+            b.wire('%d.Y' % buffer, outputs[port][i])
     b.save()
 
 
@@ -212,7 +246,7 @@ def make_status():
 # active-low enables and loads.
 CONTROL_A = [('/XRF', 0), ('/XPC', 1), ('/XEPC', 1), ('/XT', 1), ('/XSH', 1), ('CSH', 0), ('/YRF', 0), ('/YIMM', 1), ('/APC', 0),
              ('/AMAR', 1), ('/WALU', 1), ('MLOAD', 0), ('/LDPC', 1), ('/LDMAR', 1), ('/LDEPC', 1), ('/LDT', 1),
-             ('/LDIR', 1), ('RFWE', 0), ('WSEL7', 0), ('RASYS', 0), ('RBDEST', 0), ('OP0', 0), ('OP1', 0),
+             ('/LDIR', 1), ('PCINC', 0), ('RFWE', 0), ('WSEL7', 0), ('RASYS', 0), ('RBDEST', 0), ('OP0', 0), ('OP1', 0),
              ('OP2', 0), ('OP3', 0), ('CIN1', 0), ('CINC', 0), ('IMM0', 0), ('IMM1', 0), ('IMM2', 0)]
 CONTROL_B = [('WZN', 0), ('WC', 0), ('WV', 0), ('RESTORE', 0), ('SAVE', 0), ('IESET', 0), ('IECLR', 0),
              ('ACK', 0), ('MREAD', 0), ('STORE', 0), ('WSTROBE', 0), ('WORD', 0), ('TICK', 0), ('HALTED', 0), ('ILLEGAL', 0), ('N0', 0), ('N1', 0), ('N2', 0), ('N3', 0), ('N4', 0)]
@@ -272,9 +306,27 @@ class Step:
         return sum(bit << i for i, bit in enumerate(bits)), sum(bit << i for i, bit in enumerate(bits_b))
 
 
-def fetch(tick):
-    step = Step('E1').on('MREAD', 'WORD', '/LDIR', '/LDPC').x('PC').y_imm('TWO').alu('ADD')
+def fetch(tick, step=None):
+    """IR <- memory[PC], PC += 2 (in the Program Counter), on top of step's signals if given."""
+    step = (step or Step('E1')).on('MREAD', 'WORD', '/LDIR', 'PCINC')
+    step.next = S['E1']
     return step.on('TICK') if tick else step
+
+
+# A last cycle can fetch the next instruction only if it leaves the memory bus and PC alone and
+# doesn't change IE (an interrupt check right after EI, DI or RETI has to see the new IE).
+BUSY = {'/LDPC': 0, '/AMAR': 0, 'MREAD': 1, 'STORE': 1, 'WSTROBE': 1, 'IESET': 1, 'IECLR': 1, 'RESTORE': 1,
+        'SAVE': 1, 'HALTED': 1}
+
+
+def overlap(step, irq):
+    """step, an instruction's last cycle, also doing the next FETCH (or going for an interrupt)."""
+    if step.next != S['FETCH'] or any(step.signals[name] == value for name, value in BUSY.items()):
+        return step
+    if irq:  # what FETCH would do: tick, then the interrupt
+        step.next = S['INT1']
+        return step.on('TICK')
+    return fetch(True, step)
 
 
 def execute(state, opcode, function, take):
@@ -378,7 +430,7 @@ def control(state, opcode, function, take, irq):
         return Step('INT1').on('TICK', 'HALTED') if irq else Step('HALT').on('TICK', 'HALTED')
     if name == 'ILLEGAL':
         return Step('ILLEGAL').on('ILLEGAL')
-    return execute(name, opcode, function, take)
+    return overlap(execute(name, opcode, function, take), irq)
 
 
 def make_control_images():
@@ -398,7 +450,7 @@ def make_control_unit():
     names_a = [name for name, _ in CONTROL_A]
     names_b = [name for name, _ in CONTROL_B][:-5]
     b = Builder('Control Unit',
-                'The microcode sequencer: a 5-bit state register and two 32K-word ROMs, Control A.bin (30 '
+                'The microcode sequencer: a 5-bit state register and two 32K-word ROMs, Control A.bin (31 '
                 'bits) and Control B.bin (20 bits), both made by Tools/make_cpu.py. The ROMs see the state, '
                 'the opcode, the function (IR2-0, or IR11-8 for SYS), TAKE (the branch condition holds) and '
                 'IRQ; they give every control signal plus the next state, '
@@ -471,7 +523,10 @@ def make_cpu():
         b.wire(clock, '%d.CLK' % node)
         return node
 
-    ir, pc, mar, t, epc = (register(3) for _ in range(5))
+    ir, mar, t, epc = (register(3) for _ in range(4))
+    pc = b.part('Program Counter', 3, 36)
+    b.wire(clock, '%d.CLK' % pc)
+    b.wire(c('PCINC'), '%d.INC' % pc)
     for i in range(16):
         b.wire(di[i], '%d.D%d' % (ir, i))
     b.wire(c('/LDIR'), '%d./LOAD' % ir)
@@ -738,6 +793,7 @@ if __name__ == '__main__':
     make_counter(4)
     make_counter(16)
     make_shifter()
+    make_program_counter()
     make_immediate_unit()
     make_status()
     make_control_images()

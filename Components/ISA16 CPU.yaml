@@ -21,7 +21,7 @@ nodes:
   - {id: 18, component: Register 16, at: [820, 902]}
   - {id: 19, component: Register 16, at: [820, 1764]}
   - {id: 20, component: Register 16, at: [820, 2626]}
-  - {id: 21, component: Register 16, at: [820, 3488]}
+  - {id: 21, component: Program Counter, at: [820, 3488]}
   - {id: 22, component: ALU 16, at: [1600, 40]}
   - {id: 23, component: Register File, at: [1340, 40]}
   - {id: 24, component: Mux 2x4, at: [1080, 40]}
@@ -99,21 +99,22 @@ wires:
   - 1 -> 19.CLK
   - 1 -> 20.CLK
   - 1 -> 21.CLK
+  - 16.PCINC -> 21.INC
   - 16./LDIR -> 17./LOAD
   - 14 -> 17./OEA
   - 15 -> 17./OEB
-  - 16./LDPC -> 18./LOAD
-  - 16./LDMAR -> 19./LOAD
-  - 16./LDT -> 20./LOAD
-  - 16./LDEPC -> 21./LOAD
-  - 16./XPC -> 18./OEA
-  - 16./APC -> 18./OEB
-  - 16./AMAR -> 19./OEA
+  - 16./LDPC -> 21./LOAD
+  - 16./LDMAR -> 18./LOAD
+  - 16./LDT -> 19./LOAD
+  - 16./LDEPC -> 20./LOAD
+  - 16./XPC -> 21./OEA
+  - 16./APC -> 21./OEB
+  - 16./AMAR -> 18./OEA
+  - 15 -> 18./OEB
+  - 16./XT -> 19./OEA
   - 15 -> 19./OEB
-  - 16./XT -> 20./OEA
+  - 16./XEPC -> 20./OEA
   - 15 -> 20./OEB
-  - 16./XEPC -> 21./OEA
-  - 15 -> 21./OEB
   - 1 -> 23.CLK
   - 16.RFWE -> 23.WE
   - 14 -> 24.A3
@@ -173,14 +174,14 @@ wires:
   - 30.IE -> 41.B
   - 41.Y -> 16.IRQ
   - 1 -> 16.CLK
-  - 19.QA0 -> 42.A
+  - 18.QA0 -> 42.A
   - 16.WORD -> 43.A
   - 42.Y -> 43.B
   - 16.WORD -> 44.A
-  - 19.QA0 -> 44.B
+  - 18.QA0 -> 44.B
   - 16.WORD -> 45.A
   - 45.Y -> 46.A
-  - 19.QA0 -> 46.B
+  - 18.QA0 -> 46.B
   - 16.WORD -> 47.A
   - 16./WALU -> 48./OE
   - 16.MLOAD -> 50.A
@@ -233,15 +234,15 @@ wires:
   - 16.HALTED -> 12
   - 16.ILLEGAL -> 13
   - 2 -> 17.D0..D15
+  - 22.Y0..Y15 -> 21.D0..D15
   - 22.Y0..Y15 -> 18.D0..D15
   - 22.Y0..Y15 -> 19.D0..D15
   - 22.Y0..Y15 -> 20.D0..D15
-  - 22.Y0..Y15 -> 21.D0..D15
-  - 18.QA0..QA15 -> 22.A0..A15
-  - 20.QA0..QA15 -> 22.A0..A15
   - 21.QA0..QA15 -> 22.A0..A15
-  - 18.QB0..QB15 -> 4
-  - 19.QA0..QA15 -> 4
+  - 19.QA0..QA15 -> 22.A0..A15
+  - 20.QA0..QA15 -> 22.A0..A15
+  - 21.QB0..QB15 -> 4
+  - 18.QA0..QA15 -> 4
   - 17.QA6..QA8 -> 24.A0..A2
   - 17.QA5..QA7 -> 24.B0..B2
   - 24.Y0..Y2 -> 23.RA0..RA2

@@ -1,5 +1,5 @@
 name: Control Unit
-description: "The microcode sequencer: a 5-bit state register and two 32K-word ROMs, Control A.bin (30 bits) and Control B.bin (20 bits), both made by Tools/make_cpu.py. The ROMs see the state, the opcode, the function (IR2-0, or IR11-8 for SYS), TAKE (the branch condition holds) and IRQ; they give every control signal plus the next state, which loads on the rising edge of CLK. Power-up state 0 is RESET."
+description: "The microcode sequencer: a 5-bit state register and two 32K-word ROMs, Control A.bin (31 bits) and Control B.bin (20 bits), both made by Tools/make_cpu.py. The ROMs see the state, the opcode, the function (IR2-0, or IR11-8 for SYS), TAKE (the branch condition holds) and IRQ; they give every control signal plus the next state, which loads on the rising edge of CLK. Power-up state 0 is RESET."
 nodes:
   - {id: 1, kind: Input, label: "IR0", at: [40, 40]}
   - {id: 2, kind: Input, label: "IR1", at: [40, 140]}
@@ -29,13 +29,13 @@ nodes:
     kind: ROM
     at: [1080, 40]
     address: 15
-    data: 30
+    data: 31
     inputs: ["S0", "S1", "S2", "S3", "S4", "OP0", "OP1", "OP2", "OP3", "F0", "F1", "F2", "F3", "TAKE", "IRQ"]
-    outputs: ["/XRF", "/XPC", "/XEPC", "/XT", "/XSH", "CSH", "/YRF", "/YIMM", "/APC", "/AMAR", "/WALU", "MLOAD", "/LDPC", "/LDMAR", "/LDEPC", "/LDT", "/LDIR", "RFWE", "WSEL7", "RASYS", "RBDEST", "OP0", "OP1", "OP2", "OP3", "CIN1", "CINC", "IMM0", "IMM1", "IMM2"]
+    outputs: ["/XRF", "/XPC", "/XEPC", "/XT", "/XSH", "CSH", "/YRF", "/YIMM", "/APC", "/AMAR", "/WALU", "MLOAD", "/LDPC", "/LDMAR", "/LDEPC", "/LDT", "/LDIR", "PCINC", "RFWE", "WSEL7", "RASYS", "RBDEST", "OP0", "OP1", "OP2", "OP3", "CIN1", "CINC", "IMM0", "IMM1", "IMM2"]
     image: Control A.bin
   - id: 26
     kind: ROM
-    at: [1080, 1164]
+    at: [1080, 1186]
     address: 15
     data: 20
     inputs: ["S0", "S1", "S2", "S3", "S4", "OP0", "OP1", "OP2", "OP3", "F0", "F1", "F2", "F3", "TAKE", "IRQ"]
@@ -58,34 +58,35 @@ nodes:
   - {id: 41, kind: Output, label: "/LDEPC", at: [1600, 1440]}
   - {id: 42, kind: Output, label: "/LDT", at: [1600, 1540]}
   - {id: 43, kind: Output, label: "/LDIR", at: [1600, 1640]}
-  - {id: 44, kind: Output, label: "RFWE", at: [1600, 1740]}
-  - {id: 45, kind: Output, label: "WSEL7", at: [1600, 1840]}
-  - {id: 46, kind: Output, label: "RASYS", at: [1600, 1940]}
-  - {id: 47, kind: Output, label: "RBDEST", at: [1600, 2040]}
-  - {id: 48, kind: Output, label: "OP0", at: [1600, 2140]}
-  - {id: 49, kind: Output, label: "OP1", at: [1600, 2240]}
-  - {id: 50, kind: Output, label: "OP2", at: [1600, 2340]}
-  - {id: 51, kind: Output, label: "OP3", at: [1600, 2440]}
-  - {id: 52, kind: Output, label: "CIN1", at: [1600, 2540]}
-  - {id: 53, kind: Output, label: "CINC", at: [1600, 2640]}
-  - {id: 54, kind: Output, label: "IMM0", at: [1600, 2740]}
-  - {id: 55, kind: Output, label: "IMM1", at: [1600, 2840]}
-  - {id: 56, kind: Output, label: "IMM2", at: [1600, 2940]}
-  - {id: 57, kind: Output, label: "WZN", at: [1860, 40]}
-  - {id: 58, kind: Output, label: "WC", at: [1860, 140]}
-  - {id: 59, kind: Output, label: "WV", at: [1860, 240]}
-  - {id: 60, kind: Output, label: "RESTORE", at: [1860, 340]}
-  - {id: 61, kind: Output, label: "SAVE", at: [1860, 440]}
-  - {id: 62, kind: Output, label: "IESET", at: [1860, 540]}
-  - {id: 63, kind: Output, label: "IECLR", at: [1860, 640]}
-  - {id: 64, kind: Output, label: "ACK", at: [1860, 740]}
-  - {id: 65, kind: Output, label: "MREAD", at: [1860, 840]}
-  - {id: 66, kind: Output, label: "STORE", at: [1860, 940]}
-  - {id: 67, kind: Output, label: "WSTROBE", at: [1860, 1040]}
-  - {id: 68, kind: Output, label: "WORD", at: [1860, 1140]}
-  - {id: 69, kind: Output, label: "TICK", at: [1860, 1240]}
-  - {id: 70, kind: Output, label: "HALTED", at: [1860, 1340]}
-  - {id: 71, kind: Output, label: "ILLEGAL", at: [1860, 1440]}
+  - {id: 44, kind: Output, label: "PCINC", at: [1600, 1740]}
+  - {id: 45, kind: Output, label: "RFWE", at: [1600, 1840]}
+  - {id: 46, kind: Output, label: "WSEL7", at: [1600, 1940]}
+  - {id: 47, kind: Output, label: "RASYS", at: [1600, 2040]}
+  - {id: 48, kind: Output, label: "RBDEST", at: [1600, 2140]}
+  - {id: 49, kind: Output, label: "OP0", at: [1600, 2240]}
+  - {id: 50, kind: Output, label: "OP1", at: [1600, 2340]}
+  - {id: 51, kind: Output, label: "OP2", at: [1600, 2440]}
+  - {id: 52, kind: Output, label: "OP3", at: [1600, 2540]}
+  - {id: 53, kind: Output, label: "CIN1", at: [1600, 2640]}
+  - {id: 54, kind: Output, label: "CINC", at: [1600, 2740]}
+  - {id: 55, kind: Output, label: "IMM0", at: [1600, 2840]}
+  - {id: 56, kind: Output, label: "IMM1", at: [1600, 2940]}
+  - {id: 57, kind: Output, label: "IMM2", at: [1600, 3040]}
+  - {id: 58, kind: Output, label: "WZN", at: [1860, 40]}
+  - {id: 59, kind: Output, label: "WC", at: [1860, 140]}
+  - {id: 60, kind: Output, label: "WV", at: [1860, 240]}
+  - {id: 61, kind: Output, label: "RESTORE", at: [1860, 340]}
+  - {id: 62, kind: Output, label: "SAVE", at: [1860, 440]}
+  - {id: 63, kind: Output, label: "IESET", at: [1860, 540]}
+  - {id: 64, kind: Output, label: "IECLR", at: [1860, 640]}
+  - {id: 65, kind: Output, label: "ACK", at: [1860, 740]}
+  - {id: 66, kind: Output, label: "MREAD", at: [1860, 840]}
+  - {id: 67, kind: Output, label: "STORE", at: [1860, 940]}
+  - {id: 68, kind: Output, label: "WSTROBE", at: [1860, 1040]}
+  - {id: 69, kind: Output, label: "WORD", at: [1860, 1140]}
+  - {id: 70, kind: Output, label: "TICK", at: [1860, 1240]}
+  - {id: 71, kind: Output, label: "HALTED", at: [1860, 1340]}
+  - {id: 72, kind: Output, label: "ILLEGAL", at: [1860, 1440]}
 wires:
   - 11 -> 16.A
   - 10 -> 16.B
@@ -155,33 +156,34 @@ wires:
   - 25./LDEPC -> 41
   - 25./LDT -> 42
   - 25./LDIR -> 43
-  - 25.RFWE -> 44
-  - 25.WSEL7 -> 45
-  - 25.RASYS -> 46
-  - 25.RBDEST -> 47
-  - 25.OP0 -> 48
-  - 25.OP1 -> 49
-  - 25.OP2 -> 50
-  - 25.OP3 -> 51
-  - 25.CIN1 -> 52
-  - 25.CINC -> 53
-  - 25.IMM0 -> 54
-  - 25.IMM1 -> 55
-  - 25.IMM2 -> 56
-  - 26.WZN -> 57
-  - 26.WC -> 58
-  - 26.WV -> 59
-  - 26.RESTORE -> 60
-  - 26.SAVE -> 61
-  - 26.IESET -> 62
-  - 26.IECLR -> 63
-  - 26.ACK -> 64
-  - 26.MREAD -> 65
-  - 26.STORE -> 66
-  - 26.WSTROBE -> 67
-  - 26.WORD -> 68
-  - 26.TICK -> 69
-  - 26.HALTED -> 70
-  - 26.ILLEGAL -> 71
+  - 25.PCINC -> 44
+  - 25.RFWE -> 45
+  - 25.WSEL7 -> 46
+  - 25.RASYS -> 47
+  - 25.RBDEST -> 48
+  - 25.OP0 -> 49
+  - 25.OP1 -> 50
+  - 25.OP2 -> 51
+  - 25.OP3 -> 52
+  - 25.CIN1 -> 53
+  - 25.CINC -> 54
+  - 25.IMM0 -> 55
+  - 25.IMM1 -> 56
+  - 25.IMM2 -> 57
+  - 26.WZN -> 58
+  - 26.WC -> 59
+  - 26.WV -> 60
+  - 26.RESTORE -> 61
+  - 26.SAVE -> 62
+  - 26.IESET -> 63
+  - 26.IECLR -> 64
+  - 26.ACK -> 65
+  - 26.MREAD -> 66
+  - 26.STORE -> 67
+  - 26.WSTROBE -> 68
+  - 26.WORD -> 69
+  - 26.TICK -> 70
+  - 26.HALTED -> 71
+  - 26.ILLEGAL -> 72
   - 19.Y0..Y3 -> 25.F0..F3
   - 19.Y0..Y3 -> 26.F0..F3
