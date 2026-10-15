@@ -13,7 +13,7 @@ Parts (each its own component, most of them a familiar 74HC chip or two):
     Status              the flags Z N C V, the interrupt enable, and their copies saved on an exception
     Control Unit        a 5-bit state register and two microcode ROMs (Control A.bin, Control B.bin)
     Kestrel16 CPU           the datapath: register file, ALU, PC, IR, MAR, T, EPC and the buses between them
-    Timer               the emulator's 0xFF04: an interrupt every N instructions
+    Timer               the emulator's timer: an interrupt every N instructions
     Kestrel16 Computer      the CPU, two 32K x 8 RAMs (even and odd bytes), the Terminal and the Timer
 
 The CPU is multi-cycle. An instruction is fetched (IR <- memory[PC], PC += 2 in the Program Counter)
@@ -27,6 +27,7 @@ so /WE ends at the rising edge, before the address can change.
 """
 import os
 from circuit import Builder, COMPONENTS
+from definitions import Addresses, AluFunctions, Alu2Functions, AluOperations, Conditions, Devices, Opcodes, SystemFunctions
 
 BINARY = '../Binary/Programs/Fibonacci.bin'  # what the computer's RAM starts out holding
 
@@ -254,9 +255,16 @@ CONTROL_ADDRESS = ['S0', 'S1', 'S2', 'S3', 'S4', 'OP0', 'OP1', 'OP2', 'OP3', 'F0
 
 STATES = ['RESET', 'FETCH', 'FETCH2', 'E1', 'E2', 'E3', 'E4', 'INT1', 'INT2', 'HALT', 'ILLEGAL']
 S = {name: index for index, name in enumerate(STATES)}
-ALU = {'ADD': 0, 'SUB': 1, 'AND': 2, 'OR': 3, 'XOR': 4, 'SHL': 5, 'SHR': 6, 'SAR': 7, 'NOT': 8, 'NEG': 9,
-       'PASSA': 10, 'PASSB': 11, 'SXB': 12}
+ALU = {name.upper(): code for name, code in AluOperations.items()}  # ADD, SUB, ..., PASSA, PASSB, SXB
 ALL_FLAGS = ('WZN', 'WC', 'WV')
+
+# The instruction set (Source/Kestrel/Instructions.h), by name.
+Op, Alu2, Sys = Opcodes, Alu2Functions, SystemFunctions
+# The ALU operation each ALU-opcode function uses.
+AluOperationOf = {AluFunctions[name]: operation for name, operation in (
+    ('Add', 'ADD'), ('Subtract', 'SUB'), ('And', 'AND'), ('Or', 'OR'), ('Xor', 'XOR'),
+    ('ShiftLeft', 'SHL'), ('ShiftRightLogical', 'SHR'), ('ShiftRightArithmetic', 'SAR'))}
+Shifts = {AluFunctions[name] for name in ('ShiftLeft', 'ShiftRightLogical', 'ShiftRightArithmetic')}
 
 
 class Step:
@@ -332,84 +340,87 @@ def overlap(step, irq):
 def execute(state, opcode, function, take):
     """The cycle of an instruction after FETCH, in state E1..E4."""
     illegal = Step('ILLEGAL')
-    alu_ops = ['ADD', 'SUB', 'AND', 'OR', 'XOR', 'SHL', 'SHR', 'SAR']
 
-    states = {5: 2, 6: 2, 7: 2, 8: 2, 11: 2}.get(opcode, 1)  # how many E states the instruction uses
-    if opcode == 12:
-        states = {1: 3, 6: 2}.get(function, 1)
+    # how many E states the instruction uses
+    twoStates = (Op['LoadWord'], Op['StoreWord'], Op['LoadByte'], Op['StoreByte'], Op['JumpAndLink'])
+    states = 2 if opcode in twoStates else 1
+    if opcode == Op['System']:
+        states = {Sys['JumpAndLinkRegister']: 3, Sys['Trap']: 2}.get(function, 1)
     if state not in ('E1', 'E2', 'E3', 'E4')[:states]:
         return illegal
 
-    if opcode == 0:
-        if function > 7:  # F3 is always 0 here; these ROM words are never used
+    if opcode == Op['Alu']:
+        if function not in AluOperationOf:  # F3 is always 0 here; these ROM words are never used
             return illegal
-        if function >= 5:  # shifts: the shifter's result through the ALU, its carry to C
+        if function in Shifts:  # shifts: the shifter's result through the ALU, its carry to C
             return Step('FETCH').x('SH').alu('PASSA').write_register().on('WZN', 'WC', 'CSH')
-        flags = ('WZN',) if alu_ops[function] in ('AND', 'OR', 'XOR') else ALL_FLAGS
-        return Step('FETCH').x('RF').alu(alu_ops[function], 1 if function == 1 else 0).write_register().on(*flags)
-    if opcode == 1:
-        if function == 0:
+        operation = AluOperationOf[function]
+        flags = ('WZN',) if operation in ('AND', 'OR', 'XOR') else ALL_FLAGS
+        carry = 1 if function == AluFunctions['Subtract'] else 0
+        return Step('FETCH').x('RF').alu(operation, carry).write_register().on(*flags)
+    if opcode == Op['Alu2']:
+        if function == Alu2['AddWithCarry']:
             return Step('FETCH').x('RF').alu('ADD', 'C').write_register().on(*ALL_FLAGS)
-        if function == 1:
+        if function == Alu2['SubtractWithCarry']:
             return Step('FETCH').x('RF').alu('SUB', 'C').write_register().on(*ALL_FLAGS)
-        if function == 2:
+        if function == Alu2['Compare']:
             return Step('FETCH').x('RF').alu('SUB', 1).on(*ALL_FLAGS)
-        if function == 3:
+        if function == Alu2['Move']:
             return Step('FETCH').x('RF').alu('PASSA').write_register()
-        if function == 4:
+        if function == Alu2['Not']:
             return Step('FETCH').x('RF').alu('NOT').write_register().on('WZN')
-        if function == 5:
+        if function == Alu2['Negate']:
             return Step('FETCH').x('RF').alu('NEG', 1).write_register().on(*ALL_FLAGS)
-        if function == 6:
+        if function == Alu2['SignExtendByte']:
             return Step('FETCH').x('RF').alu('SXB').write_register().on('WZN')
         return illegal
-    if opcode == 2:
+    if opcode == Op['AddImmediate']:
         return Step('FETCH').x('RF').y_imm('IMM6').alu('ADD').write_register().on(*ALL_FLAGS)
-    if opcode == 3:
+    if opcode == Op['LoadImmediate']:
         return Step('FETCH').y_imm('IMM8').alu('PASSB').write_register()
-    if opcode == 4:
+    if opcode == Op['LoadHighImmediate']:
         return Step('FETCH').on('RBDEST').y_imm('LHI').alu('PASSB').write_register()
-    if opcode in (5, 7):  # LW, LB: MAR <- a + imm6, then register <- memory
+    if opcode in (Op['LoadWord'], Op['LoadByte']):  # MAR <- a + imm6, then register <- memory
         if state == 'E1':
             return Step('E2').x('RF').y_imm('IMM6').alu('ADD').on('/LDMAR')
         step = Step('FETCH').address_mar().on('MREAD', 'MLOAD', 'RFWE')
-        return step.on('WORD') if opcode == 5 else step
-    if opcode in (6, 8):  # SW, SB: MAR <- a + imm6, then a write cycle (/WE pulses while CLK is low)
+        return step.on('WORD') if opcode == Op['LoadWord'] else step
+    if opcode in (Op['StoreWord'], Op['StoreByte']):  # MAR <- a + imm6, then a write cycle (/WE pulses while CLK is low)
         if state == 'E1':
             return Step('E2').x('RF').y_imm('IMM6').alu('ADD').on('/LDMAR')
         step = Step('FETCH').address_mar().on('RBDEST', 'STORE', 'WSTROBE')
-        return step.on('WORD') if opcode == 6 else step
-    if opcode == 9:
+        return step.on('WORD') if opcode == Op['StoreWord'] else step
+    if opcode == Op['Branch']:
         return Step('FETCH').x('PC').y_imm('OFF8').alu('ADD').on('/LDPC') if take else Step('FETCH')
-    if opcode == 10:
+    if opcode == Op['Jump']:
         return Step('FETCH').x('PC').y_imm('OFF12').alu('ADD').on('/LDPC')
-    if opcode == 11:  # JAL: R7 <- PC, then PC <- PC + offset
+    if opcode == Op['JumpAndLink']:  # R7 <- PC, then PC <- PC + offset
         if state == 'E1':
             return Step('E2').x('PC').alu('PASSA').write_register(link=True)
         return Step('FETCH').x('PC').y_imm('OFF12').alu('ADD').on('/LDPC')
-    if opcode == 12:
-        if function == 0:  # JR
+    if opcode == Op['System']:
+        if function == Sys['JumpRegister']:
             return Step('FETCH').on('RASYS').x('RF').alu('PASSA').on('/LDPC')
-        if function == 1:  # JALR: T <- register, R7 <- PC, PC <- T
+        if function == Sys['JumpAndLinkRegister']:  # T <- register, R7 <- PC, PC <- T
             if state == 'E1':
                 return Step('E2').on('RASYS').x('RF').alu('PASSA').on('/LDT')
             if state == 'E2':
                 return Step('E3').x('PC').alu('PASSA').write_register(link=True)
             return Step('FETCH').x('T').alu('PASSA').on('/LDPC')
-        if function == 2:  # RETI
+        if function == Sys['ReturnFromInterrupt']:
             return Step('FETCH').x('EPC').alu('PASSA').on('/LDPC', 'RESTORE')
-        if function == 3:
+        if function == Sys['EnableInterrupts']:
             return Step('FETCH').on('IESET')
-        if function == 4:
+        if function == Sys['DisableInterrupts']:
             return Step('FETCH').on('IECLR')
-        if function == 5:
+        if function == Sys['Halt']:
             return Step('HALT')
-        if function == 6:  # TRAP: like an interrupt, returning to the next instruction
+        if function == Sys['Trap']:  # like an interrupt, returning to the next instruction
             if state == 'E1':
                 return Step('E2').x('PC').alu('PASSA').on('/LDEPC', 'SAVE', 'IECLR')
             return Step('FETCH').y_imm('TWO').alu('PASSB').on('/LDPC')
         return illegal
-    if opcode == 13:
+    if opcode == Op['CompareImmediate']:
         return Step('FETCH').x('RF').y_imm('IMM6').alu('SUB', 1).on(*ALL_FLAGS)
     return illegal
 
@@ -460,6 +471,7 @@ def make_control_unit():
     low = b.gate('Low', 1)
 
     # The function field: IR2-0 for ALU and ALU2, IR11-8 for SYS (opcode 12 = 1100).
+    assert Opcodes['System'] == 0b1100, 'the SYS decode below is wired for opcode 1100'
     is_sys = b.gate2('And', 2, b.gate2('And', 1, ir[15], ir[14]), b.gate2('Nor', 1, ir[13], ir[12]))
     function = b.part('Mux 2x4', 2, 9)
     for i in range(4):
@@ -490,12 +502,15 @@ def make_control_unit():
 # ---------------------------------------------------------------------------- CPU
 
 def condition_rows():
-    """The condition ROM: address C0-3, Z, N, C, V; data TAKE."""
+    """The condition ROM: address C0-3, Z, N, C, V; data TAKE (0 for a condition that doesn't exist)."""
+    name = {number: name for name, number in Conditions.items()}
     words = []
     for address in range(256):
         condition, z, n, c, v = address & 15, address >> 4 & 1, address >> 5 & 1, address >> 6 & 1, address >> 7 & 1
-        words.append(int([1, z, not z, not c, c, n != v, n == v, not z and n == v, z or n != v, n, not n, v, not v,
-                          0, 0, 0][condition]))
+        holds = {'Always': 1, 'Equal': z, 'NotEqual': not z, 'LessUnsigned': not c, 'GreaterOrEqualUnsigned': c,
+                 'Less': n != v, 'GreaterOrEqual': n == v, 'Greater': not z and n == v, 'LessOrEqual': z or n != v,
+                 'Minus': n, 'Plus': not n, 'OverflowSet': v, 'OverflowClear': not v}
+        words.append(int(holds[name[condition]]) if condition in name else 0)
     return ['%04X: %s' % (start, ' '.join('%X' % w for w in words[start:start + 16])) for start in range(0, 256, 16)]
 
 
@@ -677,9 +692,9 @@ def make_cpu():
 
 def make_timer():
     b = Builder('Timer',
-                'The emulator\'s timer at 0xFF04. Writing N (/CE and /WE low at a rising CLK edge) starts it: '
+                'The emulator\'s timer at 0x%04X. Writing N (/CE and /WE low at a rising CLK edge) starts it: '
                 'every Nth TICK (one per instruction) it requests an interrupt on IRQ until ACK; N = 0 stops '
-                'it. Reading (/CE and /OE low) gives N back on Q.')
+                'it. Reading (/CE and /OE low) gives N back on Q.' % Devices['Timer'][0])
     d = b.bus_input('D', 16)
     chip_enable, write_enable, output_enable = b.input('/CE'), b.input('/WE'), b.input('/OE')
     tick, ack, clock = b.input('TICK'), b.input('ACK'), b.input('CLK')
@@ -722,12 +737,13 @@ def make_timer():
 
 
 def decode_image():
-    """Address decode: A2-A15 -> /RAM, /TERMINAL (0xFF00-0xFF03), /TIMER (0xFF04-0xFF07); 1 = not selected."""
+    """Address decode: A2-A15 -> /RAM (below I/O), /TERMINAL (the UART), /TIMER; 1 = not selected."""
+    within = lambda address, device: Devices[device][0] <= address < Devices[device][0] + Devices[device][1]
     image = bytearray()
     for index in range(1 << 14):
         address = index << 2
-        ram = address < 0xFF00
-        terminal, timer = 0xFF00 <= address < 0xFF04, 0xFF04 <= address < 0xFF08
+        ram = address < Addresses['IoBase']
+        terminal, timer = within(address, 'Uart'), within(address, 'Timer')
         image.append(int(not ram) | int(not terminal) << 1 | int(not timer) << 2)
     with open(os.path.join(COMPONENTS, 'Address Decode.bin'), 'wb') as file:
         file.write(image)
@@ -736,9 +752,9 @@ def decode_image():
 def make_computer():
     b = Builder('Kestrel16 Computer',
                 'The whole machine: Kestrel16 CPU, 64K of RAM as two 32K x 8 chips (even and odd bytes, preloaded '
-                'from %s), the Terminal at 0xFF00 and the Timer at 0xFF04, picked by an address-decode ROM '
+                'from %s), the Terminal at 0x%04X and the Timer at 0x%04X, picked by an address-decode ROM '
                 '(Address Decode.bin). Simulate it and run the clock; the program prints in the Terminal pane. '
-                'To run another program, change the two RAMs\' image.' % BINARY)
+                'To run another program, change the two RAMs\' image.' % (BINARY, Devices['Uart'][0], Devices['Timer'][0]))
     clock = b.gate('Clock', 0)
     cpu = b.part('Kestrel16 CPU', 1, 60)
     halted, illegal = b.output('HALTED', 5), b.output('ILLEGAL', 5)

@@ -1,7 +1,7 @@
 // shell.c -- a small interactive shell for Kestrel16
 //
-// Build:  Binary/Compiler Shell.c && Binary/Assembler Shell.s
-// Run:    Binary/Emulator -n 0 Shell.bin (-n 0 = no step limit, it waits for input)
+// Run:    Binary/KestrelEmulator --run Programs/Shell.c   (builds it, then runs with no step limit)
+// Or:     Binary/KestrelCompiler Shell.c && Binary/KestrelAssembler Shell.s && Binary/KestrelEmulator -n 0 Shell.bin
 //
 // Talks to the UART; the constants and declarations are in Shell.h.
 

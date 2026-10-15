@@ -1,19 +1,24 @@
 cmake_minimum_required(VERSION 3.20)
 project(Kestrel16 LANGUAGES C CXX)
 
-# Layout:
-#   Source/Emulator.c                   -> Binary/Emulator
-#   Source/Assembler.c                  -> Binary/Assembler
-#   Source/Compiler.cpp                 -> Binary/Compiler      (C -> Kestrel16 assembly)
-#   Source/Application.cpp              -> Binary/Application   (circuit editor + simulator)
-#   Programs/*.s                        -> Binary/Programs/*.bin (assembled with our own assembler)
-#   Programs/*.c                        -> Binary/Programs/*_c.bin (compiled, then assembled)
-#   Components/*.yaml                   circuit components saved by the Application
+# Layout (Source/ is the include root: #include "Kestrel/Isa.h"):
+#   Source/Kestrel/      KestrelCore: the machine. Instructions.h, MemoryMap.h and AluOperations.h
+#                        define it as data (the Python generators in Tools/ read them too); Isa,
+#                        Alu, Machine (the reference implementation) and Disassembler build on them
+#   Source/Assembler/    KestrelAssemblerCore (Assemble())  + Main.cpp -> Binary/KestrelAssembler
+#   Source/Compiler/     KestrelCompilerCore (Compile())    + Main.cpp -> Binary/KestrelCompiler
+#   Source/Toolchain/    KestrelToolchain: a .c, .s or .bin to a memory image, in-process
+#   Source/Emulator/     Main.cpp                                      -> Binary/KestrelEmulator
+#   Source/Simulator/    the circuit editor and gate-level simulator   -> Binary/KestrelSimulator
+#   Programs/*.s         -> Binary/Programs/*.bin (assembled with our own assembler)
+#   Programs/*.c         -> Binary/Programs/*_c.bin (compiled, then assembled)
+#   Components/*.yaml    circuit components saved by the simulator (and made by Tools/make_*.py)
 #
 # Configure and build:   cmake -S . -B Build && cmake --build Build
-# Run a program:         cmake --build Build --target run_Fibonacci       (emulator)
-#                        cmake --build Build --target simulate_Fibonacci  (gate-level Kestrel16 Computer)
-# Any source, by hand:   Binary/Application --run "Kestrel16 Computer" --program Programs/Fibonacci.c
+# Run a program:         cmake --build Build --target run_Fibonacci_c       (emulator)
+#                        cmake --build Build --target simulate_Fibonacci_c  (gate-level Kestrel16 Computer)
+# Any source, by hand:   Binary/KestrelEmulator --run Programs/Fibonacci.c
+#                        Binary/KestrelSimulator --run "Kestrel16 Computer" --program Programs/Fibonacci.c
 # Tests:                 ctest --test-dir Build
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -114,9 +119,7 @@ if(MSVC)
         target_compile_options(Kestrel16Build INTERFACE /WX)
     endif()
 else()
-    target_compile_options(Kestrel16Build INTERFACE -Wall -Wextra $<$<COMPILE_LANGUAGE:C>:-pedantic>)
-    # The emulator's non-blocking UART uses select()/read(), which strict C99 hides.
-    target_compile_definitions(Kestrel16Build INTERFACE $<$<COMPILE_LANGUAGE:C>:_POSIX_C_SOURCE=200112L>)
+    target_compile_options(Kestrel16Build INTERFACE -Wall -Wextra)
     if(Kestrel16_WARNINGS_AS_ERRORS)
         target_compile_options(Kestrel16Build INTERFACE -Werror)
     endif()
@@ -131,21 +134,63 @@ if(MINGW)
 endif()
 
 # ---------------------------------------------------------------------------
+# Libraries: each tool is a library with a thin main, so the others can use it in-process.
+add_library(KestrelCore STATIC
+    Source/Kestrel/Alu.cpp
+    Source/Kestrel/Disassembler.cpp
+    Source/Kestrel/Files.cpp
+    Source/Kestrel/Isa.cpp
+    Source/Kestrel/Machine.cpp
+)
+target_include_directories(KestrelCore PUBLIC ${CMAKE_SOURCE_DIR}/Source)
+target_link_libraries(KestrelCore PUBLIC Kestrel16Build)
+
+add_library(KestrelAssemblerCore STATIC Source/Assembler/Assembler.cpp)
+target_link_libraries(KestrelAssemblerCore PUBLIC KestrelCore)
+
+add_library(KestrelCompilerCore STATIC
+    Source/Compiler/CodeGenerator.cpp
+    Source/Compiler/Compiler.cpp
+    Source/Compiler/Expressions.cpp
+    Source/Compiler/Lexer.cpp
+    Source/Compiler/Parser.cpp
+    Source/Compiler/Preprocessor.cpp
+    Source/Compiler/Program.cpp
+    Source/Compiler/Types.cpp
+)
+target_link_libraries(KestrelCompilerCore PUBLIC KestrelCore)
+
+add_library(KestrelToolchain STATIC Source/Toolchain/Toolchain.cpp)
+target_link_libraries(KestrelToolchain PUBLIC KestrelAssemblerCore KestrelCompilerCore)
+
+# ---------------------------------------------------------------------------
 # Tools
-add_executable(Emulator Source/Emulator.c)
-target_link_libraries(Emulator PRIVATE Kestrel16Build)
+add_executable(KestrelAssembler Source/Assembler/Main.cpp)
+target_link_libraries(KestrelAssembler PRIVATE KestrelAssemblerCore)
 
-add_executable(Compiler Source/Compiler.cpp)
-target_link_libraries(Compiler PRIVATE Kestrel16Build)
+add_executable(KestrelCompiler Source/Compiler/Main.cpp)
+target_link_libraries(KestrelCompiler PRIVATE KestrelCompilerCore)
 
-add_executable(Assembler Source/Assembler.c)
-target_link_libraries(Assembler PRIVATE Kestrel16Build)
+add_executable(KestrelEmulator Source/Emulator/Main.cpp)
+target_link_libraries(KestrelEmulator PRIVATE KestrelToolchain)
 
 # Circuit editor and simulator. Components are saved next to the sources, not in Binary/,
 # so they live in version control with everything else.
-add_executable(Application Source/Application.cpp)
-target_link_libraries(Application PRIVATE Kestrel16Build raylib rlimgui imnodes yaml-cpp::yaml-cpp)
-target_compile_definitions(Application PRIVATE
+add_executable(KestrelSimulator
+    Source/Simulator/Circuit.cpp
+    Source/Simulator/ComponentFile.cpp
+    Source/Simulator/Editor.cpp
+    Source/Simulator/EditorCanvas.cpp
+    Source/Simulator/EditorMemory.cpp
+    Source/Simulator/EditorPanels.cpp
+    Source/Simulator/HardwareCheck.cpp
+    Source/Simulator/HeadlessRun.cpp
+    Source/Simulator/Main.cpp
+    Source/Simulator/SelfTest.cpp
+    Source/Simulator/Simulation.cpp
+)
+target_link_libraries(KestrelSimulator PRIVATE KestrelToolchain raylib rlimgui imnodes yaml-cpp::yaml-cpp)
+target_compile_definitions(KestrelSimulator PRIVATE
     COMPONENTS_PATH="${CMAKE_SOURCE_DIR}/Components/")
 
 # ---------------------------------------------------------------------------
@@ -162,23 +207,23 @@ foreach(source ${PROGRAM_SOURCES})
     add_custom_command(
         OUTPUT ${binary}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${PROGRAM_OUTPUT_DIR}
-        COMMAND $<TARGET_FILE:Assembler> -o ${binary} ${source}
-        DEPENDS ${source} Assembler
+        COMMAND $<TARGET_FILE:KestrelAssembler> -o ${binary} ${source}
+        DEPENDS ${source} KestrelAssembler
         COMMENT "Assembling ${name}.s"
         VERBATIM
     )
     list(APPEND PROGRAM_BINARIES ${binary})
 
     add_custom_target(run_${name}
-        COMMAND $<TARGET_FILE:Emulator> ${binary}
-        DEPENDS ${binary} Emulator
+        COMMAND $<TARGET_FILE:KestrelEmulator> ${binary}
+        DEPENDS ${binary} KestrelEmulator
         USES_TERMINAL
         COMMENT "Running ${name}"
     )
     add_custom_target(simulate_${name}
-        COMMAND $<TARGET_FILE:Application> --components ${CMAKE_SOURCE_DIR}/Components
+        COMMAND $<TARGET_FILE:KestrelSimulator> --components ${CMAKE_SOURCE_DIR}/Components
                 --run "Kestrel16 Computer" --program ${binary} --stats
-        DEPENDS ${binary} Application
+        DEPENDS ${binary} KestrelSimulator
         USES_TERMINAL
         COMMENT "Simulating ${name} on the Kestrel16 Computer"
     )
@@ -199,31 +244,31 @@ foreach(source ${C_PROGRAM_SOURCES})
     add_custom_command(
         OUTPUT ${assembly}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${C_PROGRAM_ASM_DIR}
-        COMMAND $<TARGET_FILE:Compiler> -o ${assembly} ${source}
-        DEPENDS ${source} ${C_PROGRAM_HEADERS} Compiler
+        COMMAND $<TARGET_FILE:KestrelCompiler> -o ${assembly} ${source}
+        DEPENDS ${source} ${C_PROGRAM_HEADERS} KestrelCompiler
         COMMENT "Compiling ${name}.c"
         VERBATIM
     )
     add_custom_command(
         OUTPUT ${binary}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${PROGRAM_OUTPUT_DIR}
-        COMMAND $<TARGET_FILE:Assembler> -o ${binary} ${assembly}
-        DEPENDS ${assembly} Assembler
+        COMMAND $<TARGET_FILE:KestrelAssembler> -o ${binary} ${assembly}
+        DEPENDS ${assembly} KestrelAssembler
         COMMENT "Assembling ${name}.s (from ${name}.c)"
         VERBATIM
     )
     list(APPEND PROGRAM_BINARIES ${binary})
 
     add_custom_target(run_${name}_c
-        COMMAND $<TARGET_FILE:Emulator> ${binary}
-        DEPENDS ${binary} Emulator
+        COMMAND $<TARGET_FILE:KestrelEmulator> ${binary}
+        DEPENDS ${binary} KestrelEmulator
         USES_TERMINAL
         COMMENT "Running ${name}_c"
     )
     add_custom_target(simulate_${name}_c
-        COMMAND $<TARGET_FILE:Application> --components ${CMAKE_SOURCE_DIR}/Components
+        COMMAND $<TARGET_FILE:KestrelSimulator> --components ${CMAKE_SOURCE_DIR}/Components
                 --run "Kestrel16 Computer" --program ${binary} --stats
-        DEPENDS ${binary} Application
+        DEPENDS ${binary} KestrelSimulator
         USES_TERMINAL
         COMMENT "Simulating ${name}_c on the Kestrel16 Computer"
     )
@@ -241,15 +286,15 @@ foreach(binary ${PROGRAM_BINARIES})
     endif()
     # Through RunWithInput so stdin is an empty file: reading the UART status must not wait on
     # whatever stdin ctest hands down.
-    add_test(NAME program_${name} COMMAND ${CMAKE_COMMAND} "-DCOMMAND=$<TARGET_FILE:Emulator>;${binary}"
+    add_test(NAME program_${name} COMMAND ${CMAKE_COMMAND} "-DCOMMAND=$<TARGET_FILE:KestrelEmulator>;${binary}"
              -DINPUT= -DOUTPUT_DIRECTORY=${CMAKE_BINARY_DIR}/${name} -P ${CMAKE_SOURCE_DIR}/Tests/RunWithInput.cmake)
     set_tests_properties(program_${name} PROPERTIES FAIL_REGULAR_EXPRESSION "illegal instruction;step limit")
 endforeach()
 
 # The circuit simulator and the component file format check themselves.
-add_test(NAME application_self_test COMMAND Application --self-test)
+add_test(NAME simulator_self_test COMMAND KestrelSimulator --self-test)
 # The machine's components (ALU, ...) against the emulator.
-add_test(NAME hardware_check COMMAND Application --components ${CMAKE_SOURCE_DIR}/Components --check-hardware)
+add_test(NAME hardware_check COMMAND KestrelSimulator --components ${CMAKE_SOURCE_DIR}/Components --check-hardware)
 
 # What each program prints. The ones also listed in GATE_LEVEL_TESTS run on the gate-level
 # computer too, which has to print the same.
@@ -258,7 +303,7 @@ set(EXPECTED_Shifts_c "3EFE 1CA6")     # every shift amount, byte and word store
 set(EXPECTED_Interrupts "1FE4 0708")   # timer interrupts landing on every kind of instruction
 # The shell reads commands: type a couple in, and --run stops once they run out.
 if(EXISTS ${CMAKE_SOURCE_DIR}/Programs/Shell.c)
-    add_test(NAME program_Shell_c COMMAND ${CMAKE_COMMAND} "-DCOMMAND=$<TARGET_FILE:Emulator>;--run;${PROGRAM_OUTPUT_DIR}/Shell_c.bin"
+    add_test(NAME program_Shell_c COMMAND ${CMAKE_COMMAND} "-DCOMMAND=$<TARGET_FILE:KestrelEmulator>;--run;${PROGRAM_OUTPUT_DIR}/Shell_c.bin"
              "-DINPUT=calc 7 * 6|rev Kestrel|" -DOUTPUT_DIRECTORY=${CMAKE_BINARY_DIR}/Shell_c
              -P ${CMAKE_SOURCE_DIR}/Tests/RunWithInput.cmake)
     set_tests_properties(program_Shell_c PROPERTIES PASS_REGULAR_EXPRESSION "42.*lertseK")
@@ -271,7 +316,7 @@ foreach(name Fibonacci_c Shifts_c Interrupts)
 endforeach()
 foreach(name ${GATE_LEVEL_TESTS})
     if(TEST program_${name})
-        add_test(NAME simulate_${name} COMMAND Application --components ${CMAKE_SOURCE_DIR}/Components
+        add_test(NAME simulate_${name} COMMAND KestrelSimulator --components ${CMAKE_SOURCE_DIR}/Components
                  --run "Kestrel16 Computer" --program ${PROGRAM_OUTPUT_DIR}/${name}.bin)
         set_tests_properties(simulate_${name} PROPERTIES PASS_REGULAR_EXPRESSION "${EXPECTED_${name}}" TIMEOUT 600)
     endif()

@@ -17,10 +17,13 @@ SIN is bit 0 of the slice above (right shifts move bits down), and P0-1 is the s
 Carries ripple up from slice to slice through Cin/Cout. Operations (the OP input):
 """
 import os
+from definitions import AluOperations
 
 COMPONENTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'Components')
 
-OPERATIONS = ['ADD', 'SUB', 'AND', 'OR', 'XOR', 'SHL', 'SHR', 'SAR', 'NOT', 'NEG', 'PASSA', 'PASSB', 'SXB']
+# Source/Kestrel/AluOperations.h, by code: ADD, SUB, ..., PASSA, PASSB, SXB.
+OPERATIONS = [name.upper() for name, code in sorted(AluOperations.items(), key=lambda item: item[1])]
+assert [AluOperations[name] for name in sorted(AluOperations, key=AluOperations.get)] == list(range(len(OPERATIONS)))
 __doc__ += '\n'.join('    %2d %s' % (code, name) for code, name in enumerate(OPERATIONS)) + '\n    13-15 act as PASSA\n'
 
 
