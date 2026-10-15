@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
-project(ISA16 LANGUAGES C CXX)
+project(Kestrel16 LANGUAGES C CXX)
 
 # Layout:
 #   Source/Emulator.c                   -> Binary/Emulator
 #   Source/Assembler.c                  -> Binary/Assembler
-#   Source/Compiler.cpp                 -> Binary/Compiler      (C -> ISA16 assembly)
+#   Source/Compiler.cpp                 -> Binary/Compiler      (C -> Kestrel16 assembly)
 #   Source/Application.cpp              -> Binary/Application   (circuit editor + simulator)
 #   Programs/*.s                        -> Binary/Programs/*.bin (assembled with our own assembler)
 #   Programs/*.c                        -> Binary/Programs/*_c.bin (compiled, then assembled)
@@ -12,8 +12,8 @@ project(ISA16 LANGUAGES C CXX)
 #
 # Configure and build:   cmake -S . -B Build && cmake --build Build
 # Run a program:         cmake --build Build --target run_Fibonacci       (emulator)
-#                        cmake --build Build --target simulate_Fibonacci  (gate-level ISA16 Computer)
-# Any source, by hand:   Binary/Application --run "ISA16 Computer" --program Programs/Fibonacci.c
+#                        cmake --build Build --target simulate_Fibonacci  (gate-level Kestrel16 Computer)
+# Any source, by hand:   Binary/Application --run "Kestrel16 Computer" --program Programs/Fibonacci.c
 # Tests:                 ctest --test-dir Build
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -33,8 +33,8 @@ foreach(config ${CMAKE_CONFIGURATION_TYPES} ${CMAKE_BUILD_TYPE})
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${config} ${CMAKE_SOURCE_DIR}/Binary)
 endforeach()
 
-option(ISA16_WARNINGS_AS_ERRORS "Treat compiler warnings as errors (our code only)" OFF)
-option(ISA16_SANITIZE "Build with AddressSanitizer + UndefinedBehaviorSanitizer (GCC/Clang)" OFF)
+option(Kestrel16_WARNINGS_AS_ERRORS "Treat compiler warnings as errors (our code only)" OFF)
+option(Kestrel16_SANITIZE "Build with AddressSanitizer + UndefinedBehaviorSanitizer (GCC/Clang)" OFF)
 
 # ---------------------------------------------------------------------------
 # Vendor libraries, fetched into Build/_deps on configure and pinned to exact commits.
@@ -105,46 +105,46 @@ if(UNIX AND NOT APPLE AND CMAKE_EXE_LINKER_FLAGS MATCHES "(^| )-static( |$)")
 endif()
 
 # ---------------------------------------------------------------------------
-# Settings every ISA16 target shares (our code only; vendor code keeps its own flags).
-add_library(ISA16Build INTERFACE)
+# Settings every Kestrel16 target shares (our code only; vendor code keeps its own flags).
+add_library(Kestrel16Build INTERFACE)
 if(MSVC)
-    target_compile_options(ISA16Build INTERFACE /W4)
-    target_compile_definitions(ISA16Build INTERFACE _CRT_SECURE_NO_WARNINGS)
-    if(ISA16_WARNINGS_AS_ERRORS)
-        target_compile_options(ISA16Build INTERFACE /WX)
+    target_compile_options(Kestrel16Build INTERFACE /W4)
+    target_compile_definitions(Kestrel16Build INTERFACE _CRT_SECURE_NO_WARNINGS)
+    if(Kestrel16_WARNINGS_AS_ERRORS)
+        target_compile_options(Kestrel16Build INTERFACE /WX)
     endif()
 else()
-    target_compile_options(ISA16Build INTERFACE -Wall -Wextra $<$<COMPILE_LANGUAGE:C>:-pedantic>)
+    target_compile_options(Kestrel16Build INTERFACE -Wall -Wextra $<$<COMPILE_LANGUAGE:C>:-pedantic>)
     # The emulator's non-blocking UART uses select()/read(), which strict C99 hides.
-    target_compile_definitions(ISA16Build INTERFACE $<$<COMPILE_LANGUAGE:C>:_POSIX_C_SOURCE=200112L>)
-    if(ISA16_WARNINGS_AS_ERRORS)
-        target_compile_options(ISA16Build INTERFACE -Werror)
+    target_compile_definitions(Kestrel16Build INTERFACE $<$<COMPILE_LANGUAGE:C>:_POSIX_C_SOURCE=200112L>)
+    if(Kestrel16_WARNINGS_AS_ERRORS)
+        target_compile_options(Kestrel16Build INTERFACE -Werror)
     endif()
-    if(ISA16_SANITIZE)
-        target_compile_options(ISA16Build INTERFACE -fsanitize=address,undefined -fno-omit-frame-pointer)
-        target_link_options(ISA16Build INTERFACE -fsanitize=address,undefined)
+    if(Kestrel16_SANITIZE)
+        target_compile_options(Kestrel16Build INTERFACE -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(Kestrel16Build INTERFACE -fsanitize=address,undefined)
     endif()
 endif()
 if(MINGW)
     # std::filesystem needs this on older MinGW GCCs; harmless on newer ones.
-    target_link_libraries(ISA16Build INTERFACE $<$<VERSION_LESS:$<CXX_COMPILER_VERSION>,9.1>:stdc++fs>)
+    target_link_libraries(Kestrel16Build INTERFACE $<$<VERSION_LESS:$<CXX_COMPILER_VERSION>,9.1>:stdc++fs>)
 endif()
 
 # ---------------------------------------------------------------------------
 # Tools
 add_executable(Emulator Source/Emulator.c)
-target_link_libraries(Emulator PRIVATE ISA16Build)
+target_link_libraries(Emulator PRIVATE Kestrel16Build)
 
 add_executable(Compiler Source/Compiler.cpp)
-target_link_libraries(Compiler PRIVATE ISA16Build)
+target_link_libraries(Compiler PRIVATE Kestrel16Build)
 
 add_executable(Assembler Source/Assembler.c)
-target_link_libraries(Assembler PRIVATE ISA16Build)
+target_link_libraries(Assembler PRIVATE Kestrel16Build)
 
 # Circuit editor and simulator. Components are saved next to the sources, not in Binary/,
 # so they live in version control with everything else.
 add_executable(Application Source/Application.cpp)
-target_link_libraries(Application PRIVATE ISA16Build raylib rlimgui imnodes yaml-cpp::yaml-cpp)
+target_link_libraries(Application PRIVATE Kestrel16Build raylib rlimgui imnodes yaml-cpp::yaml-cpp)
 target_compile_definitions(Application PRIVATE
     COMPONENTS_PATH="${CMAKE_SOURCE_DIR}/Components/")
 
@@ -177,10 +177,10 @@ foreach(source ${PROGRAM_SOURCES})
     )
     add_custom_target(simulate_${name}
         COMMAND $<TARGET_FILE:Application> --components ${CMAKE_SOURCE_DIR}/Components
-                --run "ISA16 Computer" --program ${binary} --stats
+                --run "Kestrel16 Computer" --program ${binary} --stats
         DEPENDS ${binary} Application
         USES_TERMINAL
-        COMMENT "Simulating ${name} on the ISA16 Computer"
+        COMMENT "Simulating ${name} on the Kestrel16 Computer"
     )
 endforeach()
 
@@ -222,10 +222,10 @@ foreach(source ${C_PROGRAM_SOURCES})
     )
     add_custom_target(simulate_${name}_c
         COMMAND $<TARGET_FILE:Application> --components ${CMAKE_SOURCE_DIR}/Components
-                --run "ISA16 Computer" --program ${binary} --stats
+                --run "Kestrel16 Computer" --program ${binary} --stats
         DEPENDS ${binary} Application
         USES_TERMINAL
-        COMMENT "Simulating ${name}_c on the ISA16 Computer"
+        COMMENT "Simulating ${name}_c on the Kestrel16 Computer"
     )
 endforeach()
 
@@ -248,7 +248,7 @@ add_test(NAME hardware_check COMMAND Application --components ${CMAKE_SOURCE_DIR
 # The compiled Fibonacci on the gate-level machine, through the headless --run mode.
 if(TARGET simulate_Fibonacci_c)
     add_test(NAME simulate_Fibonacci_c COMMAND Application --components ${CMAKE_SOURCE_DIR}/Components
-             --run "ISA16 Computer" --program ${CMAKE_SOURCE_DIR}/Programs/Fibonacci.c)
+             --run "Kestrel16 Computer" --program ${CMAKE_SOURCE_DIR}/Programs/Fibonacci.c)
     set_tests_properties(simulate_Fibonacci_c PROPERTIES PASS_REGULAR_EXPRESSION "28657 46368" TIMEOUT 600)
 endif()
 

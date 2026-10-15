@@ -1,5 +1,5 @@
 /*
- * Circuit Workbench -- the hardware side of the ISA-16 project.
+ * Circuit Workbench -- the hardware side of the Kestrel16 project.
  *
  * Build circuits out of logic gates, wrap them up as components with their own
  * input and output pins, and use those components as black boxes inside bigger
@@ -2193,7 +2193,7 @@ wires:
     Check(!Uses(*halfAdder, "Full Adder"), "half adder doesn't use full adder");
 
     // Save, reload and test again. Also renames a used component on the way.
-    componentsDirectory = (fs::temp_directory_path() / "isa16-selftest/").string();
+    componentsDirectory = (fs::temp_directory_path() / "kestrel16-selftest/").string();
     std::error_code error;
     fs::remove_all(componentsDirectory, error);
     RenameComponent(*halfAdder, "HA");
@@ -3855,11 +3855,11 @@ static int RunHardwareCheck()
     }
 
     // The whole machine runs Fibonacci.bin and prints what the emulator prints.
-    if (Component* computer = FindComponent("ISA16 Computer")) {
+    if (Component* computer = FindComponent("Kestrel16 Computer")) {
         Simulation simulation;
         BuildSimulation(simulation, *computer);
-        printf("ISA16 Computer: %zu gates, %d nets\n", simulation.gates.size(), simulation.netCount);
-        Check(simulation.missingComponents == 0, "ISA16 Computer has all its parts");
+        printf("Kestrel16 Computer: %zu gates, %d nets\n", simulation.gates.size(), simulation.netCount);
+        Check(simulation.missingComponents == 0, "Kestrel16 Computer has all its parts");
         auto start = std::chrono::steady_clock::now();
         int cycles = 0, slowest = 0;
         while (cycles < 200000 && !ReadOutput(simulation, *computer, "HALTED") && !ReadOutput(simulation, *computer, "ILLEGAL")) {
@@ -3871,16 +3871,16 @@ static int RunHardwareCheck()
             cycles++;
         }
         double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-        printf("ISA16 Computer: %d cycles in %.1f s, slowest settle %d steps, %d conflicting nets%s\n", cycles, seconds,
+        printf("Kestrel16 Computer: %d cycles in %.1f s, slowest settle %d steps, %d conflicting nets%s\n", cycles, seconds,
                slowest, simulation.conflicts, simulation.unstable ? ", UNSTABLE" : "");
         printf("--- terminal ---\n%s\n----------------\n", simulation.console.c_str());
         static const char* const Expected =
             "Fibonacci numbers that fit in 16 bits:\n0 1 1 2 3 5 8 13 21 34 55 89 144 233 377 610 987 1597 2584 "
             "4181 6765 10946 17711 28657 46368\ntimer interrupts: 105\n";
-        Check(!ReadOutput(simulation, *computer, "ILLEGAL"), "ISA16 Computer doesn't hit an illegal instruction");
-        Check(simulation.console == Expected, "ISA16 Computer runs Fibonacci.bin like the emulator");
+        Check(!ReadOutput(simulation, *computer, "ILLEGAL"), "Kestrel16 Computer doesn't hit an illegal instruction");
+        Check(simulation.console == Expected, "Kestrel16 Computer runs Fibonacci.bin like the emulator");
     } else {
-        Check(false, "there is an ISA16 Computer component");
+        Check(false, "there is an Kestrel16 Computer component");
     }
 
     if (testFailures) {
@@ -3933,7 +3933,7 @@ static std::string BuildProgram(const std::string& program, const fs::path& tool
         return "";
     }
     std::error_code error;
-    fs::path work = fs::temp_directory_path(error) / "isa16-run";
+    fs::path work = fs::temp_directory_path(error) / "kestrel16-run";
     fs::create_directories(work, error);
     fs::path assembly = source, binary = work / (source.stem().string() + ".bin");
     if (extension == ".c") {
@@ -4142,7 +4142,7 @@ int main(int argc, char** argv)
     if (library.empty()) CreateComponent("Untitled");
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT);
-    InitWindow(1440, 880, "ISA-16 Circuit Workbench");
+    InitWindow(1440, 880, "Kestrel16 Circuit Workbench");
     SetExitKey(KEY_NULL);
     SetTargetFPS(60);
 

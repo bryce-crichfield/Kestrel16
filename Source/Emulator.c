@@ -1,15 +1,15 @@
 /*
- * ISA-16 emulator -- single file, plain C99.
+ * Kestrel16 emulator -- single file, plain C99.
  *
  * Naming: ProperCase for types, functions, constants and macros;
  *         camelCase for variables, fields and parameters.
  *
- * Build:  cc -O2 -Wall -Wextra -o isa16 main.c
- * Run:    ./isa16 prog.bin        load raw little-endian binary at 0x0000
- *         ./isa16                 run the built-in demo (prints a greeting)
- *         ./isa16 -t prog.bin     trace every instruction to stderr
- *         ./isa16 -x prog.bin     dump registers when the machine stops
- *         ./isa16 -n 1000 ...     stop after 1000 steps (0 = no limit)
+ * Build:  cc -O2 -Wall -Wextra -o Emulator Emulator.c
+ * Run:    ./Emulator prog.bin     load raw little-endian binary at 0x0000
+ *         ./Emulator              run the built-in demo (prints a greeting)
+ *         ./Emulator -t prog.bin  trace every instruction to stderr
+ *         ./Emulator -x prog.bin  dump registers when the machine stops
+ *         ./Emulator -n 1000 ...  stop after 1000 steps (0 = no limit)
  *
  * ---------------------------------------------------------------------
  * Machine model
@@ -776,7 +776,7 @@ static void LoadDemo(void)
         memory[index * InstructionSize] = (uint8_t)(code[index] & ByteMask);
         memory[index * InstructionSize + 1] = (uint8_t)(code[index] >> 8);
     }
-    strcpy((char *)&memory[DemoMessageAddress], "Hello from ISA-16!\nIf you want to run a different program, pass its filename on the command line.\n");
+    strcpy((char *)&memory[DemoMessageAddress], "Hello from Kestrel16!\nIf you want to run a different program, pass its filename on the command line.\n");
 }
 
 /* ------------------------------------------------------------------ */
@@ -842,7 +842,7 @@ static const char *BuildProgram(const char *fileName, const char *emulatorPath)
     if (!temp) temp = "/tmp";
     slash = strrchr(fileName, '/');
     if (strrchr(fileName, '\\') > slash) slash = strrchr(fileName, '\\');
-    snprintf(temporary, sizeof temporary, "%s/isa16-emulator-%.*s", temp,
+    snprintf(temporary, sizeof temporary, "%s/kestrel16-emulator-%.*s", temp,
              (int)(extension - (slash ? slash + 1 : fileName)), slash ? slash + 1 : fileName);
     snprintf(binary, sizeof binary, "%s.bin", temporary);
 

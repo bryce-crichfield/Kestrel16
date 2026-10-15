@@ -1,5 +1,5 @@
-name: ISA16 CPU
-description: "The ISA-16 processor. Memory interface: A0-15 address, DO0-15 data out (driven only while storing), DI0-15 data in, /OE read strobe, /WEL and /WEH write strobes for the even (low) and odd (high) byte, low only while CLK is low; /WRL is /WEL for the whole write cycle, for parts that latch on the clock (the Timer). TIRQ is the timer's interrupt request, ACK says it was taken, TICK marks each instruction. HALTED: HALT ran (waiting for an interrupt); ILLEGAL: stopped on an illegal instruction."
+name: Kestrel16 CPU
+description: "The Kestrel16 processor. Memory interface: A0-15 address, DO0-15 data out (driven only while storing), DI0-15 data in, /OE read strobe, /WEL and /WEH write strobes for the even (low) and odd (high) byte, low only while CLK is low; /WRL is /WEL for the whole write cycle, for parts that latch on the clock (the Timer). TIRQ is the timer's interrupt request, ACK says it was taken, TICK marks each instruction. HALTED: HALT ran (waiting for an interrupt); ILLEGAL: stopped on an illegal instruction."
 nodes:
   - {id: 1, kind: Input, label: "CLK", at: [40, 40]}
   - {id: 2, kind: Input, label: "DI", width: 16, at: [40, 140]}

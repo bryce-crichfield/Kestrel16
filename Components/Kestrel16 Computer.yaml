@@ -1,8 +1,8 @@
-name: ISA16 Computer
-description: "The whole machine: ISA16 CPU, 64K of RAM as two 32K x 8 chips (even and odd bytes, preloaded from ../Binary/Programs/Fibonacci.bin), the Terminal at 0xFF00 and the Timer at 0xFF04, picked by an address-decode ROM (Address Decode.bin). Simulate it and run the clock; the program prints in the Terminal pane. To run another program, change the two RAMs' image."
+name: Kestrel16 Computer
+description: "The whole machine: Kestrel16 CPU, 64K of RAM as two 32K x 8 chips (even and odd bytes, preloaded from ../Binary/Programs/Fibonacci.bin), the Terminal at 0xFF00 and the Timer at 0xFF04, picked by an address-decode ROM (Address Decode.bin). Simulate it and run the clock; the program prints in the Terminal pane. To run another program, change the two RAMs' image."
 nodes:
   - {id: 1, kind: Clock, at: [40, 40]}
-  - {id: 2, component: ISA16 CPU, at: [300, 40]}
+  - {id: 2, component: Kestrel16 CPU, at: [300, 40]}
   - {id: 3, kind: Output, label: "HALTED", at: [1340, 40]}
   - {id: 4, kind: Output, label: "ILLEGAL", at: [1340, 140]}
   - id: 5

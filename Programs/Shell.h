@@ -1,4 +1,4 @@
-// Shell.h -- declarations for Shell.c, the small interactive shell for ISA-16
+// Shell.h -- declarations for Shell.c, the small interactive shell for Kestrel16
 
 #ifndef SHELL_H
 #define SHELL_H

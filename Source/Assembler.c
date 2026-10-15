@@ -1,13 +1,13 @@
 /*
- * ISA-16 assembler -- single file, plain C99.
+ * Kestrel16 assembler -- single file, plain C99.
  *
  * Naming: ProperCase for types, functions, constants and macros;
  *         camelCase for variables, fields and parameters.
  *
- * Build:  cc -O2 -Wall -Wextra -o isa16asm asm.c
- * Run:    ./isa16asm prog.s              writes prog.bin
- *         ./isa16asm -o out.bin prog.s   choose the output name
- *         ./isa16asm -l prog.s           also print a listing + symbol table
+ * Build:  cc -O2 -Wall -Wextra -o Assembler Assembler.c
+ * Run:    ./Assembler prog.s             writes prog.bin
+ *         ./Assembler -o out.bin prog.s  choose the output name
+ *         ./Assembler -l prog.s          also print a listing + symbol table
  *
  * The output is a raw little-endian image starting at address 0x0000,
  * which is exactly what the emulator loads.

@@ -1,7 +1,7 @@
-// shell.c -- a small interactive shell for ISA-16
+// shell.c -- a small interactive shell for Kestrel16
 //
-// Build:  ./isa16cc shell.c && ./isa16asm shell.s
-// Run:    ./isa16 -n 0 shell.bin       (-n 0 = no step limit, it waits for input)
+// Build:  Binary/Compiler Shell.c && Binary/Assembler Shell.s
+// Run:    Binary/Emulator -n 0 Shell.bin (-n 0 = no step limit, it waits for input)
 //
 // Talks to the UART; the constants and declarations are in Shell.h.
 
@@ -271,7 +271,7 @@ void cmd_clear(int argc, char **argv)
 
 void cmd_about(int argc, char **argv)
 {
-    print("ISA-16 shell -- 16-bit CPU, 64 KB, UART at 0xFF00\n");
+    print("Kestrel16 shell -- 16-bit CPU, 64 KB, UART at 0xFF00\n");
     print("commands run this session: ");
     print_int(commandCount);
     putch('\n');
@@ -314,9 +314,9 @@ void cmd_help(int argc, char **argv)
 
 int main(void)
 {
-    print("\nISA-16 shell. Type 'help' for commands.\n");
+    print("\nKestrel16 shell. Type 'help' for commands.\n");
     while (running) {
-        print("isa16> ");
+        print("kestrel16> ");
         readline(line, LINE_MAX);
         int argc = tokenize(line);
         if (argc == 0) continue;

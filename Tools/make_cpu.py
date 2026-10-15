@@ -1,4 +1,4 @@
-"""Generates the ISA-16 CPU and the computer around it (run from anywhere, after make_alu.py and
+"""Generates the Kestrel16 CPU and the computer around it (run from anywhere, after make_alu.py and
 make_registers.py, whose components it uses):
 
     python Tools/make_cpu.py
@@ -12,9 +12,9 @@ Parts (each its own component, most of them a familiar 74HC chip or two):
     Immediate Unit      the instruction's constants, one at a time onto the Y bus
     Status              the flags Z N C V, the interrupt enable, and their copies saved on an exception
     Control Unit        a 5-bit state register and two microcode ROMs (Control A.bin, Control B.bin)
-    ISA16 CPU           the datapath: register file, ALU, PC, IR, MAR, T, EPC and the buses between them
+    Kestrel16 CPU           the datapath: register file, ALU, PC, IR, MAR, T, EPC and the buses between them
     Timer               the emulator's 0xFF04: an interrupt every N instructions
-    ISA16 Computer      the CPU, two 32K x 8 RAMs (even and odd bytes), the Terminal and the Timer
+    Kestrel16 Computer      the CPU, two 32K x 8 RAMs (even and odd bytes), the Terminal and the Timer
 
 The CPU is multi-cycle. An instruction is fetched (IR <- memory[PC], PC += 2 in the Program Counter)
 and then takes one to three more cycles. Fetching overlaps execution: when an instruction's last
@@ -500,8 +500,8 @@ def condition_rows():
 
 
 def make_cpu():
-    b = Builder('ISA16 CPU',
-                'The ISA-16 processor. Memory interface: A0-15 address, DO0-15 data out (driven only while '
+    b = Builder('Kestrel16 CPU',
+                'The Kestrel16 processor. Memory interface: A0-15 address, DO0-15 data out (driven only while '
                 'storing), DI0-15 data in, /OE read strobe, /WEL and /WEH write strobes for the even (low) and '
                 'odd (high) byte, low only while CLK is low; /WRL is /WEL for the whole write cycle, for parts that '
                 'latch on the clock (the Timer). TIRQ is the timer\'s interrupt request, ACK says it was taken, TICK marks '
@@ -734,13 +734,13 @@ def decode_image():
 
 
 def make_computer():
-    b = Builder('ISA16 Computer',
-                'The whole machine: ISA16 CPU, 64K of RAM as two 32K x 8 chips (even and odd bytes, preloaded '
+    b = Builder('Kestrel16 Computer',
+                'The whole machine: Kestrel16 CPU, 64K of RAM as two 32K x 8 chips (even and odd bytes, preloaded '
                 'from %s), the Terminal at 0xFF00 and the Timer at 0xFF04, picked by an address-decode ROM '
                 '(Address Decode.bin). Simulate it and run the clock; the program prints in the Terminal pane. '
                 'To run another program, change the two RAMs\' image.' % BINARY)
     clock = b.gate('Clock', 0)
-    cpu = b.part('ISA16 CPU', 1, 60)
+    cpu = b.part('Kestrel16 CPU', 1, 60)
     halted, illegal = b.output('HALTED', 5), b.output('ILLEGAL', 5)
     b.wire(clock, '%d.CLK' % cpu)
 
