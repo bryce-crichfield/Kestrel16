@@ -55,6 +55,9 @@
  *   Application --components DIR    load and save components in DIR
  *   Application --self-test         check the simulator without opening a window
  *   Application --screenshot FILE   render a few frames, save a PNG, and exit
+ *   Application --run COMPONENT --program FILE
+ *                                   simulate without a window; the Terminal prints to
+ *                                   stdout. FILE is a .c, .s or .bin (see --help)
  * ---------------------------------------------------------------------------
  */
 
@@ -65,19 +68,30 @@
 #include "yaml-cpp/yaml.h"
 
 #include <algorithm>
+#include <chrono>
+#include <thread>
 #include <cmath>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <filesystem>
 #include <memory>
 #include <random>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
+
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -183,6 +197,7 @@ struct MemoryData {
     std::vector<uint32_t> words = std::vector<uint32_t>(16, 0);  // always 2^addressBits long
     std::vector<std::string> addressNames, dataNames;            // optional pin names; "" means A0, D0, ...
     std::string image;  // a binary file the contents come from, relative to the components directory
+    int lane = 0;       // 0: every byte of image; 1: only its even bytes; 2: only its odd bytes
 
     uint32_t DataMask() const { return dataBits >= 32 ? 0xFFFFFFFFu : (1u << dataBits) - 1; }
     void Resize(int newAddressBits, int newDataBits)
@@ -201,6 +216,7 @@ struct Node {
     NodeKind kind = NodeKind::And;
     std::string typeName;  // for NodeKind::Component: which component this is
     std::string label;     // for Input/Output: the pin's name
+    int width = 1;         // for Input/Output: how many pins; a bus of N names them label0..labelN-1
     ImVec2 position{0, 0}; // editor grid-space position, at zoom 1
     std::shared_ptr<MemoryData> memory;  // for NodeKind::Rom and NodeKind::Ram
 
@@ -208,10 +224,12 @@ struct Node {
     Placement placement = Placement::Grid;  // tells the editor to move the node on next draw
 };
 
+// A wire of width N is a bus: it joins pins fromPin..fromPin+N-1 to toPin..toPin+N-1.
 struct Wire {
     uint32_t id = 0;
     uint32_t fromNode = 0, fromPin = 0;  // an output pin
     uint32_t toNode = 0, toPin = 0;      // an input pin
+    uint32_t width = 1;
 };
 
 struct PendingWire {
@@ -226,6 +244,7 @@ struct Component {
     std::vector<Wire> wires;
     std::vector<PendingWire> pendingWires;  // read from a file, not yet turned into wires
     std::vector<std::string> loadWarnings;  // things that went wrong loading it that didn't stop it
+    std::set<int> expandedBuses;            // editor only: bus pins (by header id) showing their bits
     uint32_t nextId = 1;
     bool dirty = false;
     ImNodesEditorContext* editor = nullptr;  // keeps this component's pan and selection
@@ -250,38 +269,64 @@ static Component* FindComponent(const std::string& name)
     return nullptr;
 }
 
+constexpr int MaxBusWidth = 32;
+
 // The Input (or Output) nodes of a component, in pin order.
 static std::vector<const Node*> PinNodes(const Component& component, NodeKind side)
 {
     std::vector<const Node*> pins;
     for (const Node& node : component.nodes)
-        if (node.kind == side && static_cast<int>(pins.size()) < MaxPinsPerSide) pins.push_back(&node);
+        if (node.kind == side) pins.push_back(&node);
     return pins;
+}
+
+// A component's pins on one side, one per bit: a bus Input of width 16 gives 16 of them.
+struct PinBit {
+    const Node* node;
+    int bit;
+};
+
+static std::vector<PinBit> PinBits(const Component& component, NodeKind side)
+{
+    std::vector<PinBit> pins;
+    for (const Node* node : PinNodes(component, side))
+        for (int bit = 0; bit < node->width && static_cast<int>(pins.size()) < MaxPinsPerSide; bit++)
+            pins.push_back({node, bit});
+    return pins;
+}
+
+static std::string BitLabel(const Node& node, int bit)
+{
+    return node.width == 1 ? node.label : node.label + std::to_string(bit);
 }
 
 static int InputCount(const Node& node)
 {
     if (node.kind == NodeKind::Terminal) return TerminalControlPins + TerminalDataBits;
+    if (node.kind == NodeKind::Input) return 0;
+    if (node.kind == NodeKind::Output) return node.width;
     if (node.kind == NodeKind::Rom) return node.memory ? node.memory->addressBits + RomControlPins : 0;
     if (node.kind == NodeKind::Ram)
         return node.memory ? node.memory->addressBits + RamControlPins + node.memory->dataBits : 0;
     if (IsPrimitive(node.kind)) return Primitives[static_cast<int>(node.kind)].inputCount;
     const Component* type = FindComponent(node.typeName);
-    return type ? static_cast<int>(PinNodes(*type, NodeKind::Input).size()) : 0;
+    return type ? static_cast<int>(PinBits(*type, NodeKind::Input).size()) : 0;
 }
 
 static int OutputCount(const Node& node)
 {
     if (node.kind == NodeKind::Terminal) return TerminalDataBits + 1;  // and IRQ
+    if (node.kind == NodeKind::Input) return node.width;
+    if (node.kind == NodeKind::Output) return 0;
     if (IsMemory(node.kind)) return node.memory ? node.memory->dataBits : 0;
     if (IsPrimitive(node.kind)) return Primitives[static_cast<int>(node.kind)].outputCount;
     const Component* type = FindComponent(node.typeName);
-    return type ? static_cast<int>(PinNodes(*type, NodeKind::Output).size()) : 0;
+    return type ? static_cast<int>(PinBits(*type, NodeKind::Output).size()) : 0;
 }
 
 static std::string PinName(const Node& node, bool output, int index)
 {
-    if (node.kind == NodeKind::Input || node.kind == NodeKind::Output) return node.label;
+    if (node.kind == NodeKind::Input || node.kind == NodeKind::Output) return BitLabel(node, index);
     if (node.kind == NodeKind::Terminal) {
         if (output) return index < TerminalDataBits ? "D" + std::to_string(index) : "IRQ";
         return index < TerminalControlPins ? TerminalControlNames[index] : "D" + std::to_string(index - TerminalControlPins);
@@ -305,15 +350,15 @@ static std::string PinName(const Node& node, bool output, int index)
     }
     const Component* type = FindComponent(node.typeName);
     if (!type) return "?";
-    std::vector<const Node*> pins = PinNodes(*type, output ? NodeKind::Output : NodeKind::Input);
-    return index < static_cast<int>(pins.size()) ? pins[index]->label : "?";
+    std::vector<PinBit> pins = PinBits(*type, output ? NodeKind::Output : NodeKind::Input);
+    return index < static_cast<int>(pins.size()) ? BitLabel(*pins[index].node, pins[index].bit) : "?";
 }
 
 static std::string NodeTitle(const Node& node)
 {
     switch (node.kind) {
-    case NodeKind::Input:     return "IN  " + node.label;
-    case NodeKind::Output:    return "OUT " + node.label;
+    case NodeKind::Input:     return "IN  " + node.label + (node.width > 1 ? " [" + std::to_string(node.width) + "]" : "");
+    case NodeKind::Output:    return "OUT " + node.label + (node.width > 1 ? " [" + std::to_string(node.width) + "]" : "");
     case NodeKind::Component: return FindComponent(node.typeName) ? node.typeName : "Missing: " + node.typeName;
     case NodeKind::Ram:
         return "RAM " + std::to_string(size_t{1} << node.memory->addressBits) + " x " + std::to_string(node.memory->dataBits);
@@ -321,6 +366,86 @@ static std::string NodeTitle(const Node& node)
         return "ROM " + std::to_string(size_t{1} << node.memory->addressBits) + " x " + std::to_string(node.memory->dataBits);
     default:                 return Primitives[static_cast<int>(node.kind)].name;
     }
+}
+
+// Pins named like A0, A1, A2, ... one after another form a bus: the editor shows them as one
+// pin, and wires along them as one bus wire. A group of one is a plain pin.
+struct PinGroup {
+    int first = 0, count = 1;
+};
+
+static bool SplitBitName(const std::string& name, std::string& prefix, int& number)
+{
+    size_t digits = name.size();
+    while (digits > 0 && std::isdigit(static_cast<unsigned char>(name[digits - 1]))) digits--;
+    if (digits == name.size() || digits == 0 || name.size() - digits > 3) return false;
+    prefix = name.substr(0, digits);
+    number = atoi(name.c_str() + digits);
+    return true;
+}
+
+static std::vector<PinGroup> PinGroups(const Node& node, bool output)
+{
+    std::vector<PinGroup> groups;
+    int count = output ? OutputCount(node) : InputCount(node);
+    std::string prefix, previous;
+    int number = 0, previousNumber = -2;
+    for (int index = 0; index < count; index++) {
+        bool numbered = SplitBitName(PinName(node, output, index), prefix, number);
+        if (numbered && !groups.empty() && prefix == previous && number == previousNumber + 1) groups.back().count++;
+        else groups.push_back({index, 1});
+        previous = numbered ? prefix : "";
+        previousNumber = numbered ? number : -2;
+    }
+    return groups;
+}
+
+static PinGroup GroupOfPin(const std::vector<PinGroup>& groups, int pin)
+{
+    for (const PinGroup& group : groups)
+        if (pin >= group.first && pin < group.first + group.count) return group;
+    return {pin, 1};
+}
+
+// Joins wires that run side by side (A0 -> B0, A1 -> B1, ...) into one bus wire. A bus
+// stays within one group at each end.
+static void MergeBusWires(Component& component)
+{
+    std::unordered_map<uint64_t, std::vector<PinGroup>> cache;
+    auto groupFirst = [&](uint32_t nodeId, bool output, uint32_t pin) {
+        uint64_t key = uint64_t{nodeId} * 2 + output;
+        auto found = cache.find(key);
+        if (found == cache.end()) {
+            const Node* node = component.FindNode(nodeId);
+            found = cache.emplace(key, node ? PinGroups(*node, output) : std::vector<PinGroup>{}).first;
+        }
+        return GroupOfPin(found->second, static_cast<int>(pin)).first;
+    };
+    std::vector<Wire> singles, result;
+    for (const Wire& wire : component.wires) (wire.width == 1 ? singles : result).push_back(wire);
+    auto offset = [](const Wire& wire) { return static_cast<int64_t>(wire.toPin) - static_cast<int64_t>(wire.fromPin); };
+    std::sort(singles.begin(), singles.end(), [&](const Wire& a, const Wire& b) {
+        return std::make_tuple(a.fromNode, a.toNode, offset(a), a.fromPin) <
+               std::make_tuple(b.fromNode, b.toNode, offset(b), b.fromPin);
+    });
+    for (size_t start = 0, end; start < singles.size(); start = end) {
+        const Wire& first = singles[start];
+        int fromGroup = groupFirst(first.fromNode, true, first.fromPin);
+        int toGroup = groupFirst(first.toNode, false, first.toPin);
+        for (end = start + 1; end < singles.size(); end++) {
+            const Wire& next = singles[end];
+            if (next.fromNode != first.fromNode || next.toNode != first.toNode || offset(next) != offset(first) ||
+                next.fromPin != first.fromPin + (end - start) ||
+                groupFirst(next.fromNode, true, next.fromPin) != fromGroup ||
+                groupFirst(next.toNode, false, next.toPin) != toGroup)
+                break;
+        }
+        Wire merged = first;
+        merged.width = static_cast<uint32_t>(end - start);
+        result.push_back(merged);
+    }
+    std::sort(result.begin(), result.end(), [](const Wire& a, const Wire& b) { return a.id < b.id; });
+    component.wires = std::move(result);
 }
 
 // Does `component` use `target` anywhere inside it?
@@ -372,12 +497,12 @@ static uint32_t AddNode(Component& component, NodeKind kind, const std::string& 
 
 // Connects an output pin to an input pin. An input that already has wires keeps them: the
 // outputs are tied together, as on a bus.
-static void Connect(Component& component, uint32_t fromNode, int fromPin, uint32_t toNode, int toPin)
+static void Connect(Component& component, uint32_t fromNode, int fromPin, uint32_t toNode, int toPin, int width = 1)
 {
     auto& wires = component.wires;
     for (const Wire& wire : wires)
         if (wire.fromNode == fromNode && wire.fromPin == static_cast<uint32_t>(fromPin) && wire.toNode == toNode &&
-            wire.toPin == static_cast<uint32_t>(toPin))
+            wire.toPin == static_cast<uint32_t>(toPin) && wire.width == static_cast<uint32_t>(width))
             return;
     Wire wire;
     wire.id = component.nextId++;
@@ -385,6 +510,7 @@ static void Connect(Component& component, uint32_t fromNode, int fromPin, uint32
     wire.fromPin = static_cast<uint32_t>(fromPin);
     wire.toNode = toNode;
     wire.toPin = static_cast<uint32_t>(toPin);
+    wire.width = static_cast<uint32_t>(width);
     wires.push_back(wire);
     component.dirty = true;
 }
@@ -418,8 +544,9 @@ static void PruneWires(Component& component)
                                [&](const Wire& wire) {
                                    const Node* from = component.FindNode(wire.fromNode);
                                    const Node* to = component.FindNode(wire.toNode);
-                                   return !from || !to || static_cast<int>(wire.fromPin) >= OutputCount(*from) ||
-                                          static_cast<int>(wire.toPin) >= InputCount(*to);
+                                   return !from || !to || wire.width == 0 ||
+                                          static_cast<int>(wire.fromPin + wire.width) > OutputCount(*from) ||
+                                          static_cast<int>(wire.toPin + wire.width) > InputCount(*to);
                                }),
                 wires.end());
     if (wires.size() != before) component.dirty = true;
@@ -432,13 +559,16 @@ static void RemapMemoryWires(Component& component, const Node& node, int oldAddr
     int controls = node.kind == NodeKind::Rom ? RomControlPins : RamControlPins;
     int newAddressBits = node.memory->addressBits, newDataBits = node.memory->dataBits;
     auto& wires = component.wires;
+    auto remap = [&](int pin) {
+        if (pin < oldAddressBits) return pin < newAddressBits ? pin : -1;
+        if (pin < oldAddressBits + controls) return pin - oldAddressBits + newAddressBits;
+        return pin - oldAddressBits - controls < newDataBits ? pin - oldAddressBits + newAddressBits : -1;
+    };
     for (Wire& wire : wires) {
         if (wire.toNode != node.id) continue;
-        int pin = static_cast<int>(wire.toPin), newPin;
-        if (pin < oldAddressBits) newPin = pin < newAddressBits ? pin : -1;
-        else if (pin < oldAddressBits + controls) newPin = pin - oldAddressBits + newAddressBits;
-        else newPin = pin - oldAddressBits - controls < newDataBits ? pin - oldAddressBits + newAddressBits : -1;
-        wire.toPin = newPin < 0 ? UINT32_MAX : static_cast<uint32_t>(newPin);
+        int first = remap(static_cast<int>(wire.toPin)), last = remap(static_cast<int>(wire.toPin + wire.width) - 1);
+        bool keep = first >= 0 && last - first == static_cast<int>(wire.width) - 1;  // a bus stays in one piece
+        wire.toPin = keep ? static_cast<uint32_t>(first) : UINT32_MAX;
     }
     wires.erase(std::remove_if(wires.begin(), wires.end(), [](const Wire& wire) { return wire.toPin == UINT32_MAX; }),
                 wires.end());
@@ -513,6 +643,14 @@ static void RenameComponent(Component& component, const std::string& newName)
 // enough. "at" is the editor position and may be left out. The order of the Input
 // and Output nodes is the order of the component's pins.
 //
+// Buses: `{id: 9, kind: Input, label: A, width: 16}` is one node with 16 pins, A0..A15; it
+// gives the component pins A0..A15, in that order. A wire can join a run of pins at once:
+//
+//     - 9 -> 12.A0..A15        # all of node 9 (16 bits) to pins A0 through A15 of node 12
+//     - 9.A4..A7 -> 13.D0..D3  # four bits of it
+//
+// Both ends of a bus wire are the same width. Wires that run side by side are saved this way.
+//
 // A ROM has address pins A0.. and data pins D0.. (or the names given):
 //
 //     - id: 8
@@ -527,6 +665,8 @@ static void RenameComponent(Component& component, const std::string& newName)
 // or, in place of contents, `image: ../Binary/Programs/Fibonacci.bin` takes the words from a
 // binary file (little-endian, as many bytes per word as the data width needs), relative to
 // the components directory. The file is read when the component loads and is never written.
+// `lane: even` (or odd) takes only the image's even (odd) bytes: the two 8-bit chips of a 16-bit
+// memory each hold one lane.
 
 static const char* const KindKeys[] = {"Input", "Output", "Low", "High", "Clock", "Buffer", "Not",
                                        "And",   "Or",     "Nand", "Nor",  "Xor",   "Xnor",   "FlipFlop",
@@ -552,6 +692,11 @@ static std::string LoadRomImage(MemoryData& rom)
     uint8_t buffer[4096];
     for (size_t count; (count = fread(buffer, 1, sizeof buffer, file)) > 0;) bytes.insert(bytes.end(), buffer, buffer + count);
     fclose(file);
+    if (rom.lane) {  // one byte lane of a 16-bit memory, as an EPROM programmer's even/odd split does
+        std::vector<uint8_t> lane;
+        for (size_t index = static_cast<size_t>(rom.lane - 1); index < bytes.size(); index += 2) lane.push_back(bytes[index]);
+        bytes.swap(lane);
+    }
 
     size_t bytesPerWord = static_cast<size_t>(RomBytesPerWord(rom));
     std::fill(rom.words.begin(), rom.words.end(), 0);
@@ -623,17 +768,26 @@ static void ParseRomContentRow(MemoryData& rom, const std::string& line)
     }
 }
 
-// How a wire end is written: "4" for a pin node, "4.Y" by name when that's unambiguous, else "4.1".
-static std::string EndpointText(const Node& node, bool output, int index)
+// How a wire end is written: "4" for all of a pin node, "4.Y" by name when that's unambiguous,
+// else "4.1"; a bus is "4.A0..A15" (or "4.0..15").
+static std::string EndpointText(const Node& node, bool output, int index, int width = 1)
 {
     std::string text = std::to_string(node.id);
-    if (node.kind == NodeKind::Input || node.kind == NodeKind::Output) return text;
-    std::string name = PinName(node, output, index);
-    int count = output ? OutputCount(node) : InputCount(node), matches = 0;
-    for (int other = 0; other < count; other++)
-        if (PinName(node, output, other) == name) matches++;
-    bool byName = !name.empty() && name != "?" && matches == 1 && name.find("->") == std::string::npos;
-    return text + "." + (byName ? name : std::to_string(index));
+    bool pinNode = node.kind == NodeKind::Input || node.kind == NodeKind::Output;
+    if (pinNode && index == 0 && width == node.width) return text;
+    auto pinText = [&](int pin) {
+        std::string name = PinName(node, output, pin);
+        int count = output ? OutputCount(node) : InputCount(node), matches = 0;
+        for (int other = 0; other < count; other++)
+            if (PinName(node, output, other) == name) matches++;
+        bool byName = !name.empty() && name != "?" && matches == 1 && name.find("->") == std::string::npos &&
+                      name.find("..") == std::string::npos;
+        return byName ? name : std::to_string(pin);
+    };
+    std::string first = pinText(index), last = pinText(index + width - 1);
+    bool numbers = std::isdigit(static_cast<unsigned char>(first[0])) || std::isdigit(static_cast<unsigned char>(last[0]));
+    if (numbers) first = std::to_string(index), last = std::to_string(index + width - 1);  // don't mix the two
+    return text + "." + first + (width > 1 ? ".." + last : "");
 }
 
 static std::string ComponentToYaml(const Component& component)
@@ -650,8 +804,10 @@ static std::string ComponentToYaml(const Component& component)
         out << YAML::Key << "id" << YAML::Value << node.id;
         if (node.kind == NodeKind::Component) out << YAML::Key << "component" << YAML::Value << node.typeName;
         else out << YAML::Key << "kind" << YAML::Value << KindKeys[static_cast<int>(node.kind)];
-        if (node.kind == NodeKind::Input || node.kind == NodeKind::Output)
+        if (node.kind == NodeKind::Input || node.kind == NodeKind::Output) {
             out << YAML::Key << "label" << YAML::Value << node.label;
+            if (node.width > 1) out << YAML::Key << "width" << YAML::Value << node.width;
+        }
         out << YAML::Key << "at" << YAML::Value << YAML::Flow << YAML::BeginSeq << std::lround(node.position.x)
             << std::lround(node.position.y) << YAML::EndSeq;
         if (IsMemory(node.kind)) {
@@ -668,6 +824,7 @@ static std::string ComponentToYaml(const Component& component)
             names("outputs", rom.dataNames);
             if (!rom.image.empty()) {
                 out << YAML::Key << "image" << YAML::Value << rom.image;
+                if (rom.lane) out << YAML::Key << "lane" << YAML::Value << (rom.lane == 1 ? "even" : "odd");
             } else if (node.kind == NodeKind::Rom) {
                 out << YAML::Key << "contents" << YAML::Value << YAML::BeginSeq;
                 for (const std::string& row : RomContentRows(rom)) out << YAML::DoubleQuoted << row;
@@ -683,8 +840,9 @@ static std::string ComponentToYaml(const Component& component)
         const Node* from = component.FindNode(wire.fromNode);
         const Node* to = component.FindNode(wire.toNode);
         if (!from || !to) continue;
-        out << EndpointText(*from, true, static_cast<int>(wire.fromPin)) + " -> " +
-                   EndpointText(*to, false, static_cast<int>(wire.toPin));
+        int width = static_cast<int>(wire.width);
+        out << EndpointText(*from, true, static_cast<int>(wire.fromPin), width) + " -> " +
+                   EndpointText(*to, false, static_cast<int>(wire.toPin), width);
     }
     out << YAML::EndSeq;
     out << YAML::EndMap;
@@ -696,6 +854,7 @@ static bool SaveComponent(Component& component)
     std::error_code error;
     fs::create_directories(componentsDirectory, error);
 
+    MergeBusWires(component);
     std::string text = ComponentToYaml(component);
     FILE* file = fopen(ComponentPath(component.name).c_str(), "wb");
     if (!file) return false;
@@ -737,8 +896,12 @@ static std::unique_ptr<Component> ComponentFromYaml(const std::string& text)
             if (found == std::end(KindKeys)) throw std::runtime_error("node " + std::to_string(node.id) + ": unknown kind '" + kind + "'");
             node.kind = static_cast<NodeKind>(found - std::begin(KindKeys));
         }
-        if (node.kind == NodeKind::Input || node.kind == NodeKind::Output)
+        if (node.kind == NodeKind::Input || node.kind == NodeKind::Output) {
             node.label = entry["label"].as<std::string>(UniquePinLabel(*component, node.kind));
+            node.width = entry["width"].as<int>(1);
+            if (node.width < 1 || node.width > MaxBusWidth)
+                throw std::runtime_error("node " + std::to_string(node.id) + ": width is 1-" + std::to_string(MaxBusWidth));
+        }
         if (IsMemory(node.kind)) {
             node.memory = std::make_shared<MemoryData>();
             MemoryData& rom = *node.memory;
@@ -757,6 +920,10 @@ static std::unique_ptr<Component> ComponentFromYaml(const std::string& text)
             names("inputs", rom.addressNames);
             names("outputs", rom.dataNames);
             rom.image = entry["image"].as<std::string>("");
+            std::string lane = entry["lane"].as<std::string>("");
+            if (!lane.empty() && lane != "even" && lane != "odd")
+                throw std::runtime_error("node " + std::to_string(node.id) + ": lane is even or odd");
+            rom.lane = lane == "even" ? 1 : lane == "odd" ? 2 : 0;
             if (!rom.image.empty()) {
                 std::string problem = LoadRomImage(rom);
                 if (!problem.empty())
@@ -786,9 +953,10 @@ static std::unique_ptr<Component> ComponentFromYaml(const std::string& text)
     return component;
 }
 
-// Turns "4.Y" into a node id and pin index. Returns an error message, or "" on success.
+// Turns "4.Y" (or a run of pins, "4.A0..A7") into a node id, first pin and pin count.
+// Returns an error message, or "" on success.
 static std::string ResolveEndpoint(const Component& component, const std::string& text, bool output,
-                                   uint32_t& nodeId, uint32_t& pin)
+                                   uint32_t& nodeId, uint32_t& pin, uint32_t& width)
 {
     size_t dot = text.find('.');
     std::string idText = text.substr(0, dot), pinText = dot == std::string::npos ? "" : text.substr(dot + 1);
@@ -798,19 +966,33 @@ static std::string ResolveEndpoint(const Component& component, const std::string
     if (!node) return "no node '" + idText + "'";
     nodeId = node->id;
     pin = 0;
-    if (pinText.empty()) return "";
-
-    int count = output ? OutputCount(*node) : InputCount(*node);
-    for (int index = 0; index < count; index++) {
-        if (PinName(*node, output, index) == pinText) {
-            pin = static_cast<uint32_t>(index);
-            return "";
-        }
+    width = 1;
+    if (pinText.empty()) {
+        if (node->kind == NodeKind::Input || node->kind == NodeKind::Output) width = static_cast<uint32_t>(node->width);
+        return "";
     }
-    unsigned long number = strtoul(pinText.c_str(), &end, 10);
-    if (*end) return "node " + idText + " has no " + (output ? "output" : "input") + " pin '" + pinText + "'";
-    pin = static_cast<uint32_t>(number);  // out-of-range numbers are dropped later by PruneWires
-    return "";
+
+    auto find = [&](const std::string& name, uint32_t& found) -> std::string {
+        int count = output ? OutputCount(*node) : InputCount(*node);
+        for (int index = 0; index < count; index++) {
+            if (PinName(*node, output, index) == name) {
+                found = static_cast<uint32_t>(index);
+                return "";
+            }
+        }
+        unsigned long number = strtoul(name.c_str(), &end, 10);
+        if (name.empty() || *end) return "node " + idText + " has no " + (output ? "output" : "input") + " pin '" + name + "'";
+        found = static_cast<uint32_t>(number);  // out-of-range numbers are dropped later by PruneWires
+        return "";
+    };
+    size_t range = pinText.find("..");
+    if (range == std::string::npos) return find(pinText, pin);
+    uint32_t last = 0;
+    std::string problem = find(pinText.substr(0, range), pin);
+    if (problem.empty()) problem = find(pinText.substr(range + 2), last);
+    if (problem.empty() && last < pin) problem = "'" + pinText + "' runs backwards";
+    width = last - pin + 1;
+    return problem;
 }
 
 // Turns pendingWires into wires. Returns a message for each wire that couldn't be resolved.
@@ -819,8 +1001,11 @@ static std::vector<std::string> ResolveWires(Component& component)
     std::vector<std::string> problems;
     for (const PendingWire& pending : component.pendingWires) {
         Wire wire;
-        std::string problem = ResolveEndpoint(component, pending.from, true, wire.fromNode, wire.fromPin);
-        if (problem.empty()) problem = ResolveEndpoint(component, pending.to, false, wire.toNode, wire.toPin);
+        uint32_t toWidth = 0;
+        std::string problem = ResolveEndpoint(component, pending.from, true, wire.fromNode, wire.fromPin, wire.width);
+        if (problem.empty()) problem = ResolveEndpoint(component, pending.to, false, wire.toNode, wire.toPin, toWidth);
+        if (problem.empty() && toWidth != wire.width)
+            problem = "one end is " + std::to_string(wire.width) + " bits wide, the other " + std::to_string(toWidth);
         if (!problem.empty()) {
             problems.push_back(component.name + ": wire '" + pending.from + " -> " + pending.to + "': " + problem);
             continue;
@@ -829,6 +1014,7 @@ static std::vector<std::string> ResolveWires(Component& component)
         component.wires.push_back(wire);
     }
     component.pendingWires.clear();
+    MergeBusWires(component);
     return problems;
 }
 
@@ -951,12 +1137,13 @@ struct Simulation {
     std::vector<TerminalUnit> terminals;
     std::string console;       // what the terminals have printed
     std::deque<uint8_t> keys;  // typed, not yet read
+    bool keysWanted = false;   // a status read found no key waiting (headless runs read stdin then)
     std::vector<uint8_t> signals, nextSignals;
     int netCount = 0;
 
     // The edited component's own nodes, for drawing and inspecting: pin -> net.
     std::unordered_map<uint32_t, std::vector<int>> nodeInputNets, nodeOutputNets;
-    std::unordered_map<uint32_t, int> switchGates;  // Input node -> its switch gate
+    std::unordered_map<uint32_t, std::vector<int>> switchGates;  // Input node -> its switch gates, bit 0 first
     std::unordered_map<uint32_t, int> topRams;      // RAM node -> its unit in rams
 
     uint8_t clock = 0;
@@ -997,7 +1184,7 @@ public:
     std::vector<TerminalUnit> terminals;
     std::unordered_map<uint32_t, int> topRams;
     std::unordered_map<uint32_t, std::vector<int>> topInputs, topOutputs;
-    std::unordered_map<uint32_t, int> topSwitches;
+    std::unordered_map<uint32_t, std::vector<int>> topSwitches;
     int missingComponents = 0;
     bool nestingTooDeep = false;
 
@@ -1033,19 +1220,20 @@ public:
 
             switch (node.kind) {
             case NodeKind::Input:
-                if (depth == 0) {
-                    Gate gate{GateKind::Switch};
-                    gate.outputs[0] = pins.outputs[0];
-                    topSwitches[node.id] = static_cast<int>(gates.size());
-                    gates.push_back(gate);
-                } else if (inputPin < boundaryInputs.size()) {
-                    Merge(pins.outputs[0], boundaryInputs[inputPin]);
+                for (size_t bit = 0; bit < pins.outputs.size(); bit++, inputPin++) {
+                    if (depth == 0) {
+                        Gate gate{GateKind::Switch};
+                        gate.outputs[0] = pins.outputs[bit];
+                        topSwitches[node.id].push_back(static_cast<int>(gates.size()));
+                        gates.push_back(gate);
+                    } else if (inputPin < boundaryInputs.size()) {
+                        Merge(pins.outputs[bit], boundaryInputs[inputPin]);
+                    }
                 }
-                inputPin++;
                 break;
             case NodeKind::Output:
-                if (depth > 0 && outputPin < boundaryOutputs.size()) Merge(pins.inputs[0], boundaryOutputs[outputPin]);
-                outputPin++;
+                for (size_t bit = 0; bit < pins.inputs.size(); bit++, outputPin++)
+                    if (depth > 0 && outputPin < boundaryOutputs.size()) Merge(pins.inputs[bit], boundaryOutputs[outputPin]);
                 break;
             case NodeKind::Rom:
             {
@@ -1116,8 +1304,10 @@ public:
         for (const Wire& wire : component.wires) {
             auto from = endpoints.find(wire.fromNode), to = endpoints.find(wire.toNode);
             if (from == endpoints.end() || to == endpoints.end()) continue;
-            if (wire.fromPin >= from->second.outputs.size() || wire.toPin >= to->second.inputs.size()) continue;
-            Merge(from->second.outputs[wire.fromPin], to->second.inputs[wire.toPin]);
+            if (wire.fromPin + wire.width > from->second.outputs.size() || wire.toPin + wire.width > to->second.inputs.size())
+                continue;
+            for (uint32_t bit = 0; bit < wire.width; bit++)
+                Merge(from->second.outputs[wire.fromPin + bit], to->second.inputs[wire.toPin + bit]);
         }
     }
 
@@ -1268,8 +1458,11 @@ static int Settle(Simulation& simulation, bool edgesEnabled = true)
                 }
             }
             if (readNow) {
+                // Latch the register as the read starts: when it ends, the address can move on
+                // before the decoder lets go of /CE, which would turn a data read into a status one.
+                if (!terminal.reading) terminal.readRegister = registerNow;
                 terminal.reading = true;
-                terminal.readRegister = registerNow;
+                if (terminal.readRegister && simulation.keys.empty()) simulation.keysWanted = true;
                 int byte = registerNow ? (simulation.keys.empty() ? 0 : 1) | 2  // status: key waiting, ready to print
                                        : (simulation.keys.empty() ? 0 : simulation.keys.front());
                 for (int bit = 0; bit < TerminalDataBits; bit++) drive(terminal.data[static_cast<size_t>(bit)], (byte >> bit) & 1);
@@ -1347,18 +1540,29 @@ static void HalfStep(Simulation& simulation)
     RecordSettle(simulation);
 }
 
-static void SetSwitch(Simulation& simulation, uint32_t inputNode, int value)
+// Sets an Input node's switches (bit n of value for its pin n) without settling.
+static void SetSwitchBits(Simulation& simulation, uint32_t inputNode, uint32_t value)
 {
     auto found = simulation.switchGates.find(inputNode);
     if (found == simulation.switchGates.end()) return;
-    simulation.gates[found->second].state = static_cast<uint8_t>(value != 0);
+    for (size_t bit = 0; bit < found->second.size(); bit++)
+        simulation.gates[static_cast<size_t>(found->second[bit])].state = static_cast<uint8_t>((value >> bit) & 1);
+}
+
+static void SetSwitch(Simulation& simulation, uint32_t inputNode, uint32_t value)
+{
+    SetSwitchBits(simulation, inputNode, value);
     RecordSettle(simulation);
 }
 
-static int SwitchValue(const Simulation& simulation, uint32_t inputNode)
+static uint32_t SwitchValue(const Simulation& simulation, uint32_t inputNode)
 {
     auto found = simulation.switchGates.find(inputNode);
-    return found == simulation.switchGates.end() ? 0 : simulation.gates[found->second].state;
+    if (found == simulation.switchGates.end()) return 0;
+    uint32_t value = 0;
+    for (size_t bit = 0; bit < found->second.size(); bit++)
+        value |= static_cast<uint32_t>(simulation.gates[static_cast<size_t>(found->second[bit])].state) << bit;
+    return value;
 }
 
 // ===========================================================================
@@ -1395,6 +1599,32 @@ static int ReadOutput(const Simulation& simulation, const Component& component, 
 static uint8_t ReadLevel(const Simulation& simulation, const Component& component, const char* label)
 {
     return simulation.Level(simulation.NetOfInput(PinNodeByLabel(component, NodeKind::Output, label), 0));
+}
+
+// Sets several inputs at once without settling: "A" with 16 bits sets the bus Input A, or else
+// the Inputs A0..A15.
+static void SetBus(Simulation& simulation, const Component& component, const char* name, int bits, uint32_t value)
+{
+    if (uint32_t bus = PinNodeByLabel(component, NodeKind::Input, name); bus && component.FindNode(bus)->width == bits) {
+        SetSwitchBits(simulation, bus, value);
+        return;
+    }
+    for (int bit = 0; bit < bits; bit++) {
+        std::string label = bits == 1 ? name : name + std::to_string(bit);
+        SetSwitchBits(simulation, PinNodeByLabel(component, NodeKind::Input, label.c_str()), (value >> bit) & 1);
+    }
+}
+
+static uint32_t ReadBus(const Simulation& simulation, const Component& component, const char* name, int bits)
+{
+    uint32_t value = 0;
+    uint32_t bus = PinNodeByLabel(component, NodeKind::Output, name);
+    for (int bit = 0; bit < bits; bit++) {
+        int net = bus ? simulation.NetOfInput(bus, bit)
+                      : simulation.NetOfInput(PinNodeByLabel(component, NodeKind::Output, (name + std::to_string(bit)).c_str()), 0);
+        value |= static_cast<uint32_t>(simulation.Value(net)) << bit;
+    }
+    return value;
 }
 
 static void TestFullAdder(const char* heading)
@@ -1605,6 +1835,73 @@ wires:
             Check(ComponentToYaml(*again) == text, "shift register YAML round-trips exactly");
             shifter.dirty = true;  // include it in the save and reload below
         }
+    }
+
+    // Buses: bus Input/Output nodes, range wires, and side-by-side wires merging into one.
+    {
+        static const char* const PassYaml = R"(
+name: Bus Pass
+nodes:
+  - {id: 1, kind: Input, label: A, width: 4}
+  - {id: 2, kind: Output, label: Y, width: 4}
+wires:
+  - 1 -> 2
+)";
+        static const char* const UseYaml = R"(
+name: Bus Use
+nodes:
+  - {id: 1, kind: Input, label: X, width: 4}
+  - {id: 3, component: Bus Pass}
+  - {id: 5, kind: Output, label: Q, width: 2}
+  - {id: 6, kind: Output, label: Z, width: 2}
+  - {id: 7, kind: Output, label: TOP}
+wires:
+  - 1 -> 3.A0..A3
+  - 3.Y2..Y3 -> 5
+  - 3.Y0 -> 6.Z0
+  - 3.Y1 -> 6.Z1
+  - 3.Y3 -> 7
+)";
+        std::unique_ptr<Component> pass, use;
+        try {
+            pass = ComponentFromYaml(PassYaml);
+            use = ComponentFromYaml(UseYaml);
+        } catch (const std::exception& exception) {
+            printf("  bus YAML: %s\n", exception.what());
+        }
+        Check(pass && use, "bus YAML parses");
+        if (pass && use) {
+            library.push_back(std::move(pass));
+            Component& passComponent = *library.back();
+            library.push_back(std::move(use));
+            Component& useComponent = *library.back();
+            Check(ResolveWires(passComponent).empty() && passComponent.wires.size() == 1 &&
+                      passComponent.wires[0].width == 4,
+                  "a bare bus node id wires all its bits");
+            Check(ResolveWires(useComponent).empty() && useComponent.wires.size() == 4,
+                  "range wires resolve, and Y0 -> Z0, Y1 -> Z1 merge into one bus wire");
+            Check(InputCount(*useComponent.FindNode(3)) == 4 && PinName(*useComponent.FindNode(3), true, 2) == "Y2",
+                  "a bus Input gives its user pins A0..A3");
+
+            Simulation simulation;
+            BuildSimulation(simulation, useComponent);
+            SetSwitch(simulation, PinNodeByLabel(useComponent, NodeKind::Input, "X"), 0b1011);
+            Check(ReadBus(simulation, useComponent, "Q", 2) == 0b10 && ReadBus(simulation, useComponent, "Z", 2) == 0b11 &&
+                      ReadOutput(simulation, useComponent, "TOP") == 1,
+                  "bus wires carry every bit");
+
+            std::string text = ComponentToYaml(useComponent);
+            Check(text.find("3.Y0..Y1 -> 6") != std::string::npos && text.find("1 -> 3.A0..A3") != std::string::npos,
+                  "bus wires save as ranges");
+            std::unique_ptr<Component> again = ComponentFromYaml(text);
+            ResolveWires(*again);
+            Check(ComponentToYaml(*again) == text, "bus YAML round-trips exactly");
+            passComponent.dirty = useComponent.dirty = true;
+        }
+
+        std::unique_ptr<Component> bad = ComponentFromYaml("name: Bad Bus\nnodes:\n  - {id: 1, kind: Input, label: A, width: 4}\n"
+                                                           "  - {id: 2, kind: Output, label: Y, width: 3}\nwires:\n  - 1 -> 2\n");
+        Check(ResolveWires(*bad).size() == 1, "a wire whose ends differ in width is reported");
     }
 
     // A ROM as a 2-to-4 decoder, the way an opcode decoder EEPROM would be set up.
@@ -1904,7 +2201,7 @@ wires:
     library.clear();
     std::vector<std::string> problems = LoadLibrary();
     for (const std::string& problem : problems) printf("  %s\n", problem.c_str());
-    Check(problems.empty() && library.size() == 9, "reload all nine components");
+    Check(problems.empty() && library.size() == 11, "reload all eleven components");
     Check(FindComponent("HA") && FindComponent("Full Adder"), "renamed reference survives the round trip");
     if (FindComponent("Full Adder")) TestFullAdder("Full adder (reloaded)");
     if (Component* decoder = FindComponent("Decoder ROM")) {
@@ -2010,11 +2307,88 @@ static int PinId(uint32_t node, bool output, int index)
     return static_cast<int>(node) * (2 * MaxPinsPerSide) + (output ? MaxPinsPerSide : 0) + index;
 }
 
-static void DecodePinId(int pinId, uint32_t& node, bool& output, int& index)
+// A bus pin (one pin standing for a group) has the negative of its first bit's id, less one.
+static int BusPinId(uint32_t node, bool output, int first) { return -1 - PinId(node, output, first); }
+
+static void DecodePinId(int pinId, uint32_t& node, bool& output, int& index, bool* bus = nullptr)
 {
+    if (bus) *bus = pinId < 0;
+    if (pinId < 0) pinId = -1 - pinId;
     node = static_cast<uint32_t>(pinId / (2 * MaxPinsPerSide));
     output = (pinId % (2 * MaxPinsPerSide)) >= MaxPinsPerSide;
     index = pinId % MaxPinsPerSide;
+}
+
+// Pins with a one-bit wire on them, by PinId. A bus with any of these shows its bits.
+static std::unordered_set<int> singleWirePins;
+
+static void FindSingleWirePins(const Component& component)
+{
+    singleWirePins.clear();
+    for (const Wire& wire : component.wires) {
+        if (wire.width != 1) continue;
+        singleWirePins.insert(PinId(wire.fromNode, true, static_cast<int>(wire.fromPin)));
+        singleWirePins.insert(PinId(wire.toNode, false, static_cast<int>(wire.toPin)));
+    }
+}
+
+// Is this group drawn as one bus pin only? Otherwise its bits are listed under the bus pin.
+static bool BusCollapsed(const Component& component, uint32_t node, bool output, const PinGroup& group)
+{
+    if (group.count < 2 || component.expandedBuses.count(BusPinId(node, output, group.first))) return false;
+    for (int pin = group.first; pin < group.first + group.count; pin++)
+        if (singleWirePins.count(PinId(node, output, pin))) return false;
+    return true;
+}
+
+// The imnodes attribute a wire end attaches to: the bus pin for a bus wire on a collapsed group
+// or one spanning its whole group, else the first bit's own pin.
+static int WireEndAttribute(const Component& component, const Node& node, bool output, int pin, int width)
+{
+    PinGroup group = GroupOfPin(PinGroups(node, output), pin);
+    if (group.count > 1 && (BusCollapsed(component, node.id, output, group) ||
+                            (width > 1 && pin == group.first && width == group.count)))
+        return BusPinId(node.id, output, group.first);
+    return PinId(node.id, output, pin);
+}
+
+// Several bits as hex: "Z" when nothing drives any of them, "?" for a digit with a bit that's
+// floating or in conflict.
+static std::string BusText(const Simulation& simulation, const std::vector<int>& nets)
+{
+    if (std::all_of(nets.begin(), nets.end(), [&](int net) { return simulation.Level(net) == Floating; })) return "Z";
+    std::string text;
+    for (int digit = (static_cast<int>(nets.size()) + 3) / 4 - 1; digit >= 0; digit--) {
+        int value = 0;
+        bool known = true;
+        for (int bit = 0; bit < 4 && digit * 4 + bit < static_cast<int>(nets.size()); bit++) {
+            uint8_t level = simulation.Level(nets[static_cast<size_t>(digit * 4 + bit)]);
+            if (level == High) value |= 1 << bit;
+            else if (level != Low) known = false;
+        }
+        text += known ? "0123456789ABCDEF"[value] : '?';
+    }
+    return text;
+}
+
+static uint8_t BusLevel(const Simulation& simulation, const std::vector<int>& nets)
+{
+    bool anyHigh = false, allFloating = true;
+    for (int net : nets) {
+        uint8_t level = simulation.Level(net);
+        if (level == Conflict) return Conflict;
+        anyHigh |= level == High;
+        allFloating &= level == Floating;
+    }
+    return allFloating ? Floating : anyHigh ? High : Low;
+}
+
+static std::vector<int> PinNets(const Simulation& simulation, uint32_t node, bool output, int first, int count)
+{
+    std::vector<int> nets;
+    for (int pin = first; pin < first + count; pin++)
+        nets.push_back(output ? simulation.NetOfOutput(node, pin) : simulation.NetOfInput(node, pin));
+    return nets;
 }
 
 static void EnsureEditor(Component& component)
@@ -2169,18 +2543,38 @@ static void DrawNode(Node& node)
         width = std::max(width, ImGui::CalcTextSize(PinName(node, false, index).c_str()).x + 30 * zoom);
     for (int index = 0; index < outputs; index++)
         width = std::max(width, ImGui::CalcTextSize(PinName(node, true, index).c_str()).x + 30 * zoom);
+    for (bool output : {false, true}) {
+        for (const PinGroup& group : PinGroups(node, output)) {
+            if (group.count < 2) continue;
+            std::string name = PinName(node, output, group.first) + ".." + PinName(node, output, group.first + group.count - 1);
+            if (simulating) name += " = " + std::string(static_cast<size_t>((group.count + 3) / 4), '0');
+            width = std::max(width, ImGui::CalcTextSize(name.c_str()).x + 40 * zoom);
+        }
+    }
     width = std::max(width, 60.0f * zoom);
 
-    if (simulating && node.kind == NodeKind::Input) {
-        int value = SwitchValue(simulation, node.id);
+    if (simulating && node.kind == NodeKind::Input && node.width == 1) {
+        uint32_t value = SwitchValue(simulation, node.id);
         ImGui::PushID(static_cast<int>(node.id));
         ImGui::PushStyleColor(ImGuiCol_Button, value ? ColorHigh : ColorLow);
         if (ImGui::Button(value ? " 1 " : " 0 ")) SetSwitch(simulation, node.id, !value);
         ImGui::PopStyleColor();
         ImGui::PopID();
     }
-    if (simulating && node.kind == NodeKind::Output) {
+    if (simulating && node.kind == NodeKind::Input && node.width > 1) {
+        uint32_t value = SwitchValue(simulation, node.id);
+        ImGui::PushID(static_cast<int>(node.id));
+        ImGui::SetNextItemWidth(ImGui::CalcTextSize("00000000").x + 10 * zoom);
+        if (ImGui::InputScalar("##value", ImGuiDataType_U32, &value, nullptr, nullptr, "%X",
+                               ImGuiInputTextFlags_CharsHexadecimal))
+            SetSwitch(simulation, node.id, value);
+        ImGui::PopID();
+    }
+    if (simulating && node.kind == NodeKind::Output && node.width == 1) {
         DrawLed(simulation.Value(simulation.NetOfInput(node.id, 0)) != 0);
+    }
+    if (simulating && node.kind == NodeKind::Output && node.width > 1) {
+        ImGui::Text("%s", BusText(simulation, PinNets(simulation, node.id, false, 0, node.width)).c_str());
     }
     if (simulating && IsMemory(node.kind)) {
         size_t address = 0;
@@ -2194,37 +2588,70 @@ static void DrawNode(Node& node)
         if (words) ImGui::TextDisabled("[%zX] = %X", address, static_cast<unsigned>((*words)[address]));
     }
 
-    for (int index = 0; index < inputs; index++) {
+    // One pin. A bus pin is square, and has a +/- to show or hide its bits.
+    auto drawPin = [&](bool output, int first, int count, bool bus, bool collapsed) {
+        int attribute = bus ? BusPinId(node.id, output, first) : PinId(node.id, output, first);
+        std::string name = PinName(node, output, first);
+        if (bus) name += ".." + PinName(node, output, first + count - 1);
         if (simulating) {
-            ImU32 color = LevelColor(simulation.Level(simulation.NetOfInput(node.id, index)));
+            std::vector<int> nets = PinNets(simulation, node.id, output, first, count);
+            ImU32 color = LevelColor(BusLevel(simulation, nets));
             ImNodes::PushColorStyle(ImNodesCol_Pin, color);
             ImNodes::PushColorStyle(ImNodesCol_PinHovered, color);
+            if (bus) name += " = " + BusText(simulation, nets);
         }
-        ImNodes::BeginInputAttribute(PinId(node.id, false, index));
-        ImGui::TextUnformatted(PinName(node, false, index).c_str());
-        ImNodes::EndInputAttribute();
+        ImNodesPinShape shape = bus ? ImNodesPinShape_QuadFilled : ImNodesPinShape_CircleFilled;
+        if (output) ImNodes::BeginOutputAttribute(attribute, shape);
+        else ImNodes::BeginInputAttribute(attribute, shape);
+        float buttonWidth = 0;
+        if (bus) {
+            bool forced = !collapsed && !component.expandedBuses.count(attribute);  // single wires on its bits
+            ImGui::PushID(attribute);
+            ImGui::BeginDisabled(forced);
+            if (!output && ImGui::SmallButton(collapsed ? "+" : "-")) {
+                if (collapsed) component.expandedBuses.insert(attribute);
+                else component.expandedBuses.erase(attribute);
+            }
+            if (!output) ImGui::SameLine();
+            if (output) buttonWidth = ImGui::CalcTextSize("+").x + ImGui::GetStyle().FramePadding.x * 2 +
+                                      ImGui::GetStyle().ItemSpacing.x;
+            ImGui::EndDisabled();
+            ImGui::PopID();
+        }
+        if (output) {
+            float indent = std::max(0.0f, width - ImGui::CalcTextSize(name.c_str()).x - buttonWidth);
+            ImGui::Indent(indent);
+            ImGui::TextUnformatted(name.c_str());
+            ImGui::Unindent(indent);
+            if (bus) {
+                ImGui::SameLine();
+                ImGui::PushID(attribute);
+                ImGui::BeginDisabled(!collapsed && !component.expandedBuses.count(attribute));
+                if (ImGui::SmallButton(collapsed ? "+" : "-")) {
+                    if (collapsed) component.expandedBuses.insert(attribute);
+                    else component.expandedBuses.erase(attribute);
+                }
+                ImGui::EndDisabled();
+                ImGui::PopID();
+            }
+        } else {
+            ImGui::TextUnformatted(name.c_str());
+        }
+        if (output) ImNodes::EndOutputAttribute();
+        else ImNodes::EndInputAttribute();
         if (simulating) {
             ImNodes::PopColorStyle();
             ImNodes::PopColorStyle();
         }
-    }
-
-    for (int index = 0; index < outputs; index++) {
-        if (simulating) {
-            ImU32 color = LevelColor(simulation.Level(simulation.NetOfOutput(node.id, index)));
-            ImNodes::PushColorStyle(ImNodesCol_Pin, color);
-            ImNodes::PushColorStyle(ImNodesCol_PinHovered, color);
-        }
-        std::string name = PinName(node, true, index);
-        ImNodes::BeginOutputAttribute(PinId(node.id, true, index));
-        float indent = width - ImGui::CalcTextSize(name.c_str()).x;
-        ImGui::Indent(indent);
-        ImGui::TextUnformatted(name.c_str());
-        ImGui::Unindent(indent);
-        ImNodes::EndOutputAttribute();
-        if (simulating) {
-            ImNodes::PopColorStyle();
-            ImNodes::PopColorStyle();
+    };
+    for (bool output : {false, true}) {
+        for (const PinGroup& group : PinGroups(node, output)) {
+            bool collapsed = BusCollapsed(component, node.id, output, group);
+            if (group.count > 1) drawPin(output, group.first, group.count, true, collapsed);
+            if (collapsed) continue;
+            if (group.count > 1) ImGui::Indent(10 * zoom);
+            for (int pin = group.first; pin < group.first + group.count; pin++) drawPin(output, pin, 1, false, false);
+            if (group.count > 1) ImGui::Unindent(10 * zoom);
         }
     }
     if (inputs == 0 && outputs == 0) ImGui::Dummy(ImVec2(width, 1));
@@ -2702,17 +3129,25 @@ static void DrawCanvas(ImVec2 position, ImVec2 size)
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4 * zoom, 3 * zoom));
 
     ImNodes::BeginNodeEditor();
+    FindSingleWirePins(component);
     for (Node& node : component.nodes) DrawNode(node);
 
     for (const Wire& wire : component.wires) {
+        const Node* from = component.FindNode(wire.fromNode);
+        const Node* to = component.FindNode(wire.toNode);
+        if (!from || !to) continue;
+        int width = static_cast<int>(wire.width);
         if (!editing) {
-            ImU32 color = LevelColor(simulation.Level(simulation.NetOfOutput(wire.fromNode, static_cast<int>(wire.fromPin))));
+            ImU32 color = LevelColor(BusLevel(simulation, PinNets(simulation, wire.fromNode, true,
+                                                                  static_cast<int>(wire.fromPin), width)));
             ImNodes::PushColorStyle(ImNodesCol_Link, color);
             ImNodes::PushColorStyle(ImNodesCol_LinkHovered, Lighten(color, 30));
             ImNodes::PushColorStyle(ImNodesCol_LinkSelected, Lighten(color, 30));
         }
-        ImNodes::Link(static_cast<int>(wire.id), PinId(wire.fromNode, true, static_cast<int>(wire.fromPin)),
-                      PinId(wire.toNode, false, static_cast<int>(wire.toPin)));
+        if (width > 1) ImNodes::PushStyleVar(ImNodesStyleVar_LinkThickness, ImNodes::GetStyle().LinkThickness * 2.5f);
+        ImNodes::Link(static_cast<int>(wire.id), WireEndAttribute(component, *from, true, static_cast<int>(wire.fromPin), width),
+                      WireEndAttribute(component, *to, false, static_cast<int>(wire.toPin), width));
+        if (width > 1) ImNodes::PopStyleVar();
         if (!editing) {
             ImNodes::PopColorStyle();
             ImNodes::PopColorStyle();
@@ -2738,6 +3173,20 @@ static void DrawCanvas(ImVec2 position, ImVec2 size)
 
     int hovered = -1;
     app.hoveredNode = ImNodes::IsNodeHovered(&hovered) ? hovered : -1;
+    int hoveredLink;
+    if (ImNodes::IsLinkHovered(&hoveredLink)) {
+        for (const Wire& wire : component.wires) {
+            const Node* from = component.FindNode(wire.fromNode);
+            const Node* to = component.FindNode(wire.toNode);
+            if (wire.id != static_cast<uint32_t>(hoveredLink) || !from || !to) continue;
+            int width = static_cast<int>(wire.width);
+            std::string text = EndpointText(*from, true, static_cast<int>(wire.fromPin), width) + " -> " +
+                               EndpointText(*to, false, static_cast<int>(wire.toPin), width);
+            if (width > 1) text += "  (" + std::to_string(width) + " bits)";
+            if (!editing) text += " = " + BusText(simulation, PinNets(simulation, wire.fromNode, true, static_cast<int>(wire.fromPin), width));
+            ImGui::SetTooltip("%s", text.c_str());
+        }
+    }
     if (app.hoveredNode >= 0 && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
         OpenRomEditor(static_cast<uint32_t>(app.hoveredNode));  // does nothing unless it's a ROM
 
@@ -2745,11 +3194,24 @@ static void DrawCanvas(ImVec2 position, ImVec2 size)
         int startPin, endPin;
         if (ImNodes::IsLinkCreated(&startPin, &endPin)) {
             uint32_t fromNode, toNode;
-            bool fromOutput, toOutput;
+            bool fromOutput, toOutput, fromBus, toBus;
             int fromIndex, toIndex;
-            DecodePinId(startPin, fromNode, fromOutput, fromIndex);
-            DecodePinId(endPin, toNode, toOutput, toIndex);
-            if (fromOutput && !toOutput) Connect(component, fromNode, fromIndex, toNode, toIndex);
+            DecodePinId(startPin, fromNode, fromOutput, fromIndex, &fromBus);
+            DecodePinId(endPin, toNode, toOutput, toIndex, &toBus);
+            const Node* from = component.FindNode(fromNode);
+            const Node* to = component.FindNode(toNode);
+            if (fromOutput && !toOutput && from && to) {
+                // A bus pin carries its whole group. A bit pin wired to a bus pin starts a bus of
+                // the same width there.
+                int fromWidth = fromBus ? GroupOfPin(PinGroups(*from, true), fromIndex).count : 1;
+                int toWidth = toBus ? GroupOfPin(PinGroups(*to, false), toIndex).count : 1;
+                int width = std::max(fromWidth, toWidth);
+                bool fits = fromIndex + width <= OutputCount(*from) && toIndex + width <= InputCount(*to);
+                if ((fromWidth == toWidth || fromWidth == 1 || toWidth == 1) && fits)
+                    Connect(component, fromNode, fromIndex, toNode, toIndex, width);
+                else
+                    SetStatus("Can't wire %d bits to %d: show the bus's bits (+) to wire some of them", fromWidth, toWidth);
+            }
         }
         int destroyedLink;
         if (ImNodes::IsLinkDestroyed(&destroyedLink)) RemoveWire(component, static_cast<uint32_t>(destroyedLink));
@@ -2853,12 +3315,20 @@ static void DrawSelectedNodeProperties(Node& node)
             node.label = app.labelBuffer;
             component.dirty = true;
         }
+        if (ImGui::SliderInt("Bits", &node.width, 1, MaxBusWidth)) {
+            node.width = std::clamp(node.width, 1, MaxBusWidth);
+            component.dirty = true;
+            PruneWires(component);
+        }
+        ImGui::SetItemTooltip("More than 1 makes a bus: pins %s0, %s1, ...", node.label.c_str(), node.label.c_str());
         int pinNumber = 0;
         for (const Node* pin : PinNodes(component, node.kind)) {
-            pinNumber++;
             if (pin == &node) break;
+            pinNumber += pin->width;
         }
-        ImGui::TextDisabled("%s pin %d of this component", node.kind == NodeKind::Input ? "Input" : "Output", pinNumber);
+        const char* side = node.kind == NodeKind::Input ? "Input" : "Output";
+        if (node.width == 1) ImGui::TextDisabled("%s pin %d of this component", side, pinNumber + 1);
+        else ImGui::TextDisabled("%s pins %d-%d of this component", side, pinNumber + 1, pinNumber + node.width);
     }
 
     if (IsMemory(node.kind)) {
@@ -2945,8 +3415,8 @@ static void DrawProperties(ImVec2 position, ImVec2 size)
         if (node.kind == NodeKind::Component) parts++;
         else if (node.kind != NodeKind::Input && node.kind != NodeKind::Output) gates++;
     }
-    ImGui::Text("Pins: %zu in, %zu out", PinNodes(component, NodeKind::Input).size(),
-                PinNodes(component, NodeKind::Output).size());
+    ImGui::Text("Pins: %zu in, %zu out", PinBits(component, NodeKind::Input).size(),
+                PinBits(component, NodeKind::Output).size());
     ImGui::Text("Parts: %d primitives, %d components", gates, parts);
     ImGui::Text("Wires: %zu", component.wires.size());
 
@@ -2964,6 +3434,8 @@ static void DrawProperties(ImVec2 position, ImVec2 size)
     ImGui::SeparatorText("How to");
     ImGui::TextWrapped(
         "Drag from an output pin to an input pin to wire them. Several wires into one input make a bus.\n"
+        "Pins named A0, A1, ... show as one square bus pin, and a wire between two of them carries every bit. "
+        "+ shows a bus's bits, to wire them one at a time.\n"
         "Ctrl+click a wire end to pull it off.\n"
         "Delete removes the selection.\n"
         "Middle-drag pans, the mouse wheel zooms.\n"
@@ -3049,9 +3521,17 @@ static void DrawSimulationPanel(ImVec2 position, ImVec2 size)
     bool anyInput = false;
     for (const Node* node : PinNodes(component, NodeKind::Input)) {
         anyInput = true;
-        bool on = SwitchValue(simulation, node->id) != 0;
         ImGui::PushID(static_cast<int>(node->id));
-        if (ImGui::Checkbox(node->label.c_str(), &on)) SetSwitch(simulation, node->id, on);
+        if (node->width == 1) {
+            bool on = SwitchValue(simulation, node->id) != 0;
+            if (ImGui::Checkbox(node->label.c_str(), &on)) SetSwitch(simulation, node->id, on);
+        } else {
+            uint32_t value = SwitchValue(simulation, node->id);
+            ImGui::SetNextItemWidth(ImGui::CalcTextSize("00000000").x + 16);
+            if (ImGui::InputScalar(node->label.c_str(), ImGuiDataType_U32, &value, nullptr, nullptr, "%X",
+                                   ImGuiInputTextFlags_CharsHexadecimal))
+                SetSwitch(simulation, node->id, value);
+        }
         ImGui::PopID();
     }
     if (!anyInput) ImGui::TextDisabled("(no Input nodes)");
@@ -3060,6 +3540,10 @@ static void DrawSimulationPanel(ImVec2 position, ImVec2 size)
     bool anyOutput = false;
     for (const Node* node : PinNodes(component, NodeKind::Output)) {
         anyOutput = true;
+        if (node->width > 1) {
+            ImGui::Text("%s = %s", node->label.c_str(), BusText(simulation, PinNets(simulation, node->id, false, 0, node->width)).c_str());
+            continue;
+        }
         uint8_t level = simulation.Level(simulation.NetOfInput(node->id, 0));
         DrawLed(level == High);
         ImGui::SameLine();
@@ -3218,26 +3702,6 @@ static void DrawFrame()
 // Hardware check (--check-hardware): tests the machine's components in the components
 // directory against the emulator's behaviour.
 
-// Sets several inputs at once ("A" with 16 bits sets A0..A15), then settles once.
-static void SetBus(Simulation& simulation, const Component& component, const char* name, int bits, uint32_t value)
-{
-    for (int bit = 0; bit < bits; bit++) {
-        std::string label = bits == 1 ? name : name + std::to_string(bit);
-        auto found = simulation.switchGates.find(PinNodeByLabel(component, NodeKind::Input, label.c_str()));
-        if (found != simulation.switchGates.end()) simulation.gates[found->second].state = (value >> bit) & 1;
-    }
-}
-
-static uint32_t ReadBus(const Simulation& simulation, const Component& component, const char* name, int bits)
-{
-    uint32_t value = 0;
-    for (int bit = 0; bit < bits; bit++) {
-        std::string label = bits == 1 ? name : name + std::to_string(bit);
-        value |= static_cast<uint32_t>(ReadOutput(simulation, component, label.c_str()) & 1) << bit;
-    }
-    return value;
-}
-
 struct AluResult {
     uint16_t y;
     int carry, overflow;  // overflow is only checked for the adder operations
@@ -3348,6 +3812,77 @@ static int RunHardwareCheck()
         Check(false, "there is an ALU 16 component");
     }
 
+    if (Component* file = FindComponent("Register File")) {
+        Simulation simulation;
+        BuildSimulation(simulation, *file);
+        printf("Register File: %zu gates, %d nets\n", simulation.gates.size(), simulation.netCount);
+        Check(simulation.missingComponents == 0, "Register File has all its parts");
+
+        uint16_t registers[8];
+        uint32_t seed = 777;
+        auto random = [&] { return seed = seed * 1103515245u + 12345u, static_cast<uint16_t>(seed >> 8); };
+        auto clock = [&] {
+            SetBus(simulation, *file, "CLK", 1, 1);
+            RecordSettle(simulation);
+            SetBus(simulation, *file, "CLK", 1, 0);
+            RecordSettle(simulation);
+        };
+        auto write = [&](int r, uint16_t value, int enable) {
+            SetBus(simulation, *file, "W", 3, r);
+            SetBus(simulation, *file, "D", 16, value);
+            SetBus(simulation, *file, "WE", 1, enable);
+            RecordSettle(simulation);
+            clock();
+            if (enable) registers[r] = value;
+        };
+        for (int r = 0; r < 8; r++) write(r, random(), 1);
+
+        int failures = 0;
+        for (int i = 0; i < 2000; i++) {
+            write(random() & 7, random(), (random() & 3) != 0);  // a quarter of the cycles don't write
+            int ra = random() & 7, rb = random() & 7;
+            SetBus(simulation, *file, "RA", 3, ra);
+            SetBus(simulation, *file, "RB", 3, rb);
+            RecordSettle(simulation);
+            uint32_t qa = ReadBus(simulation, *file, "QA", 16), qb = ReadBus(simulation, *file, "QB", 16);
+            if ((qa != registers[ra] || qb != registers[rb]) && failures++ < 10)
+                printf("  R%d=%04X R%d=%04X: read %04X %04X\n", ra, registers[ra], rb, registers[rb], qa, qb);
+        }
+        Check(failures == 0, "Register File keeps R0-R7 like the emulator");
+        Check(simulation.conflicts == 0, "Register File read ports never conflict");
+    } else {
+        Check(false, "there is a Register File component");
+    }
+
+    // The whole machine runs Fibonacci.bin and prints what the emulator prints.
+    if (Component* computer = FindComponent("ISA16 Computer")) {
+        Simulation simulation;
+        BuildSimulation(simulation, *computer);
+        printf("ISA16 Computer: %zu gates, %d nets\n", simulation.gates.size(), simulation.netCount);
+        Check(simulation.missingComponents == 0, "ISA16 Computer has all its parts");
+        auto start = std::chrono::steady_clock::now();
+        int cycles = 0, slowest = 0;
+        while (cycles < 200000 && !ReadOutput(simulation, *computer, "HALTED") && !ReadOutput(simulation, *computer, "ILLEGAL")) {
+            for (int edge = 0; edge < 2; edge++) {
+                simulation.clock ^= 1;
+                RecordSettle(simulation);
+                slowest = std::max(slowest, simulation.lastSettleSteps);
+            }
+            cycles++;
+        }
+        double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        printf("ISA16 Computer: %d cycles in %.1f s, slowest settle %d steps, %d conflicting nets%s\n", cycles, seconds,
+               slowest, simulation.conflicts, simulation.unstable ? ", UNSTABLE" : "");
+        printf("--- terminal ---\n%s\n----------------\n", simulation.console.c_str());
+        static const char* const Expected =
+            "Fibonacci numbers that fit in 16 bits:\n0 1 1 2 3 5 8 13 21 34 55 89 144 233 377 610 987 1597 2584 "
+            "4181 6765 10946 17711 28657 46368\ntimer interrupts: 105\n";
+        Check(!ReadOutput(simulation, *computer, "ILLEGAL"), "ISA16 Computer doesn't hit an illegal instruction");
+        Check(simulation.console == Expected, "ISA16 Computer runs Fibonacci.bin like the emulator");
+    } else {
+        Check(false, "there is an ISA16 Computer component");
+    }
+
     if (testFailures) {
         printf("%d check(s) failed\n", testFailures);
         return 1;
@@ -3356,10 +3891,216 @@ static int RunHardwareCheck()
     return 0;
 }
 
+// ===========================================================================
+// Headless run (--run): simulates a component with no window, gate by gate, and
+// prints what its Terminal prints to stdout. With --program, the program (a .c,
+// .s or .bin; compiled and assembled with the Compiler and Assembler next to this
+// executable) replaces the image of every top-level RAM that has one, keeping
+// each RAM's byte lane. Piped stdin is typed into the Terminal as the program asks for
+// it; the run stops (status 0) once it has run out and the program waits for more.
+// ===========================================================================
+
+struct RunOptions {
+    std::string component;
+    std::string program;
+    std::vector<std::string> stopPins, failPins;  // 1-bit Output labels
+    uint64_t maxCycles = 10000000;
+    double hz = 0;  // clock rate to hold to; 0 = as fast as the simulation goes
+    bool stats = false;
+};
+
+static std::string Quoted(const std::string& text) { return "\"" + text + "\""; }
+
+// Runs a command line whose arguments are already quoted. Its output goes to stderr, so
+// stdout carries only what the program prints.
+static int RunTool(const std::string& commandLine)
+{
+#ifdef _WIN32
+    return std::system(("\"" + commandLine + " 1>&2\"").c_str());  // cmd.exe strips one outer pair of quotes
+#else
+    return std::system((commandLine + " 1>&2").c_str());
+#endif
+}
+
+// Turns a .c or .s into a .bin in a temporary folder. Returns the .bin, or "" (after saying why).
+static std::string BuildProgram(const std::string& program, const fs::path& toolDirectory)
+{
+    fs::path source = fs::absolute(program);
+    std::string extension = source.extension().string();
+    if (extension == ".bin") return source.string();
+    if (extension != ".c" && extension != ".s") {
+        fprintf(stderr, "%s: expected a .c, .s or .bin file\n", program.c_str());
+        return "";
+    }
+    std::error_code error;
+    fs::path work = fs::temp_directory_path(error) / "isa16-run";
+    fs::create_directories(work, error);
+    fs::path assembly = source, binary = work / (source.stem().string() + ".bin");
+    if (extension == ".c") {
+        assembly = work / (source.stem().string() + ".s");
+        std::string compiler = (toolDirectory / "Compiler").string();
+        if (RunTool(Quoted(compiler) + " -o " + Quoted(assembly.string()) + " " + Quoted(source.string())) != 0) {
+            fprintf(stderr, "compiling %s failed\n", program.c_str());
+            return "";
+        }
+    }
+    std::string assembler = (toolDirectory / "Assembler").string();
+    if (RunTool(Quoted(assembler) + " -o " + Quoted(binary.string()) + " " + Quoted(assembly.string())) != 0) {
+        fprintf(stderr, "assembling %s failed\n", program.c_str());
+        return "";
+    }
+    return binary.string();
+}
+
+// Exit status: 0 stopped on a --until pin, 1 a --fail-on pin went high, 2 a usage or load
+// problem, 3 the cycle limit, 4 the circuit oscillates.
+static int RunHeadless(const RunOptions& options, const fs::path& toolDirectory)
+{
+    std::vector<std::string> problems = LoadLibrary();
+    for (const std::string& problem : problems) fprintf(stderr, "%s\n", problem.c_str());
+    Component* component = FindComponent(options.component);
+    if (!component) {
+        fprintf(stderr, "no component named '%s' in %s\n", options.component.c_str(), componentsDirectory.c_str());
+        return 2;
+    }
+
+    if (!options.program.empty()) {
+        std::string binary = BuildProgram(options.program, toolDirectory);
+        if (binary.empty()) return 2;
+        int loaded = 0;
+        for (Node& node : component->nodes) {
+            if (node.kind != NodeKind::Ram || !node.memory || node.memory->image.empty()) continue;
+            node.memory->image = binary;  // absolute, so the components directory doesn't matter
+            std::string problem = LoadRomImage(*node.memory);
+            if (!problem.empty()) {
+                fprintf(stderr, "%s\n", problem.c_str());
+                return 2;
+            }
+            loaded++;
+        }
+        if (!loaded) {
+            fprintf(stderr, "'%s' has no RAM with an image to load the program into\n", component->name.c_str());
+            return 2;
+        }
+    }
+
+    // With no --until or --fail-on, stop on HALTED and fail on ILLEGAL, if the component has them.
+    std::vector<std::string> stopPins = options.stopPins, failPins = options.failPins;
+    auto hasOutput = [&](const std::string& label) {
+        for (const Node* node : PinNodes(*component, NodeKind::Output))
+            if (node->label == label && node->width == 1) return true;
+        return false;
+    };
+    if (stopPins.empty() && failPins.empty()) {
+        if (hasOutput("HALTED")) stopPins.push_back("HALTED");
+        if (hasOutput("ILLEGAL")) failPins.push_back("ILLEGAL");
+    }
+    for (const std::vector<std::string>* pins : {&stopPins, &failPins})
+        for (const std::string& label : *pins)
+            if (!hasOutput(label)) {
+                fprintf(stderr, "'%s' has no 1-bit Output named '%s'\n", component->name.c_str(), label.c_str());
+                return 2;
+            }
+
+    Simulation simulation;
+    BuildSimulation(simulation, *component);
+    if (simulation.missingComponents) fprintf(stderr, "%d missing component(s) left out\n", simulation.missingComponents);
+    // Stdin (a pipe or the console) is read a line at a time, only once the program asks for a
+    // key that isn't there, so a program that never reads doesn't wait on input.
+    bool endOfInput = false;
+    size_t starvedAt = 0;
+    int starvedPolls = 0;
+
+    auto firstHigh = [&](const std::vector<std::string>& labels) -> const std::string* {
+        for (const std::string& label : labels)
+            if (ReadOutput(simulation, *component, label.c_str())) return &label;
+        return nullptr;
+    };
+    size_t printed = 0;
+    auto flushConsole = [&] {
+        if (simulation.console.size() == printed) return;
+        fwrite(simulation.console.data() + printed, 1, simulation.console.size() - printed, stdout);
+        fflush(stdout);
+        printed = simulation.console.size();
+    };
+
+    auto start = std::chrono::steady_clock::now();
+    uint64_t cycles = 0;
+    int status = 3;
+    std::string reason = "the cycle limit";
+    // --hz paces the clock against wall time from paceStart; waiting on input restarts it.
+    auto paceStart = start;
+    uint64_t paceCycles = 0;
+    double waitedSeconds = 0;
+    for (;;) {
+        if (const std::string* pin = firstHigh(failPins)) { status = 1; reason = *pin; break; }
+        if (const std::string* pin = firstHigh(stopPins)) { status = 0; reason = *pin; break; }
+        if (simulation.unstable) { status = 4; reason = "an oscillation"; break; }
+        if (simulation.keysWanted) {
+            simulation.keysWanted = false;
+            // Printing polls the status register too, so the program only counts as waiting for
+            // a key once it has gone on polling without printing anything.
+            if (simulation.console.size() != starvedAt) starvedAt = simulation.console.size(), starvedPolls = 0;
+            if (simulation.keys.empty() && ++starvedPolls > 100) {
+                starvedPolls = 0;
+                if (endOfInput) { status = 0; reason = "the end of input"; break; }
+                flushConsole();  // show the prompt before waiting on a console line
+                auto waitStart = std::chrono::steady_clock::now();
+                int character;
+                while ((character = getchar()) != EOF) {
+                    simulation.keys.push_back(static_cast<uint8_t>(character));
+                    if (character == '\n') break;
+                }
+                if (character == EOF) endOfInput = true;
+                paceStart = std::chrono::steady_clock::now(), paceCycles = cycles;
+                waitedSeconds += std::chrono::duration<double>(paceStart - waitStart).count();
+            }
+        }
+        if (cycles >= options.maxCycles) break;
+        HalfStep(simulation);
+        HalfStep(simulation);
+        cycles++;
+        flushConsole();
+        if (options.hz > 0) {
+            auto due = paceStart + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                       std::chrono::duration<double>((cycles - paceCycles) / options.hz));
+            if (due > std::chrono::steady_clock::now()) std::this_thread::sleep_until(due);
+        }
+    }
+    flushConsole();
+
+    // Time spent waiting for a typed line isn't the machine's.
+    double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() - waitedSeconds;
+    if (status != 0 || options.stats)
+        fprintf(stderr, "%s: stopped on %s after %llu cycles (%.1f s, %.0f Hz; %zu gates, slowest settle %d steps, %d conflicting nets)\n",
+                component->name.c_str(), reason.c_str(), static_cast<unsigned long long>(cycles), seconds,
+                seconds > 0 ? cycles / seconds : 0.0, simulation.gates.size(), simulation.slowestSettleSteps,
+                simulation.conflicts);
+    return status;
+}
+
+static int Usage(const char* program, int status)
+{
+    fprintf(stderr,
+            "usage: %s [--components DIR] [--self-test] [--check-hardware] [--screenshot FILE] [--simulate]\n"
+            "       %s [--components DIR] --run COMPONENT [--program FILE] [--until PIN]... [--fail-on PIN]...\n"
+            "                             [--max-cycles N] [--stats]\n"
+            "--run simulates COMPONENT without a window: its Terminal prints to stdout, and piped stdin is typed into it.\n"
+            "  --program FILE   a .c, .s or .bin, built and loaded into every RAM that has an image\n"
+            "  --until PIN      stop (status 0) when this 1-bit Output goes high (default HALTED)\n"
+            "  --fail-on PIN    stop (status 1) when this one does (default ILLEGAL)\n"
+            "  --max-cycles N   give up after N clock cycles (status 3; default 10000000)\n"
+            "  --hz N           hold the clock to N cycles per second (if the simulation can keep up)\n"
+            "  --stats          report cycles, time, clock rate and gate counts on stderr\n",
+            program, program);
+    return status;
+}
+
 int main(int argc, char** argv)
 {
     const char* screenshotPath = nullptr;
     bool simulateOnStart = false;
+    RunOptions run;
 
     for (int index = 1; index < argc; index++) {
         std::string argument = argv[index];
@@ -3372,11 +4113,29 @@ int main(int argc, char** argv)
             screenshotPath = argv[++index];
         } else if (argument == "--simulate") {
             simulateOnStart = true;
+        } else if (argument == "--run" && index + 1 < argc) {
+            run.component = argv[++index];
+        } else if (argument == "--program" && index + 1 < argc) {
+            run.program = argv[++index];
+        } else if (argument == "--until" && index + 1 < argc) {
+            run.stopPins.push_back(argv[++index]);
+        } else if (argument == "--fail-on" && index + 1 < argc) {
+            run.failPins.push_back(argv[++index]);
+        } else if (argument == "--max-cycles" && index + 1 < argc) {
+            run.maxCycles = std::strtoull(argv[++index], nullptr, 0);
+        } else if (argument == "--hz" && index + 1 < argc) {
+            run.hz = std::strtod(argv[++index], nullptr);
+        } else if (argument == "--stats") {
+            run.stats = true;
+        } else if (argument == "--help" || argument == "-h") {
+            return Usage(argv[0], 0);
         } else {
-            fprintf(stderr, "usage: %s [--components DIR] [--self-test] [--check-hardware] [--screenshot FILE] [--simulate]\n", argv[0]);
-            return 2;
+            return Usage(argv[0], 2);
         }
     }
+
+    if (!run.component.empty()) return RunHeadless(run, fs::absolute(argv[0]).parent_path());
+    if (!run.program.empty() || !run.stopPins.empty() || !run.failPins.empty() || run.stats) return Usage(argv[0], 2);
 
     std::vector<std::string> problems = LoadLibrary();
     for (const std::string& problem : problems) fprintf(stderr, "%s\n", problem.c_str());

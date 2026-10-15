@@ -2,14 +2,18 @@ cmake_minimum_required(VERSION 3.20)
 project(ISA16 LANGUAGES C CXX)
 
 # Layout:
-#   Source/Emulator/main.c              -> Binary/Emulator
-#   Source/Assembler/asm.c              -> Binary/Assembler
-#   Source/Application/Application.cpp  -> Binary/Application   (circuit editor + simulator)
+#   Source/Emulator.c                   -> Binary/Emulator
+#   Source/Assembler.c                  -> Binary/Assembler
+#   Source/Compiler.cpp                 -> Binary/Compiler      (C -> ISA16 assembly)
+#   Source/Application.cpp              -> Binary/Application   (circuit editor + simulator)
 #   Programs/*.s                        -> Binary/Programs/*.bin (assembled with our own assembler)
+#   Programs/*.c                        -> Binary/Programs/*_c.bin (compiled, then assembled)
 #   Components/*.yaml                   circuit components saved by the Application
 #
 # Configure and build:   cmake -S . -B Build && cmake --build Build
-# Run a program:         cmake --build Build --target run_Fibonacci
+# Run a program:         cmake --build Build --target run_Fibonacci       (emulator)
+#                        cmake --build Build --target simulate_Fibonacci  (gate-level ISA16 Computer)
+# Any source, by hand:   Binary/Application --run "ISA16 Computer" --program Programs/Fibonacci.c
 # Tests:                 ctest --test-dir Build
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -131,6 +135,9 @@ endif()
 add_executable(Emulator Source/Emulator.c)
 target_link_libraries(Emulator PRIVATE ISA16Build)
 
+add_executable(Compiler Source/Compiler.cpp)
+target_link_libraries(Compiler PRIVATE ISA16Build)
+
 add_executable(Assembler Source/Assembler.c)
 target_link_libraries(Assembler PRIVATE ISA16Build)
 
@@ -168,6 +175,56 @@ foreach(source ${PROGRAM_SOURCES})
         USES_TERMINAL
         COMMENT "Running ${name}"
     )
+    add_custom_target(simulate_${name}
+        COMMAND $<TARGET_FILE:Application> --components ${CMAKE_SOURCE_DIR}/Components
+                --run "ISA16 Computer" --program ${binary} --stats
+        DEPENDS ${binary} Application
+        USES_TERMINAL
+        COMMENT "Simulating ${name} on the ISA16 Computer"
+    )
+endforeach()
+
+# Every Programs/*.c is compiled to Build/Programs/<name>.s, then assembled into
+# Binary/Programs/<name>_c.bin (the _c keeps it apart from a <name>.s of the same name).
+file(GLOB C_PROGRAM_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/Programs/*.c)
+set(C_PROGRAM_ASM_DIR ${CMAKE_BINARY_DIR}/Programs)
+
+foreach(source ${C_PROGRAM_SOURCES})
+    get_filename_component(name ${source} NAME_WE)
+    set(assembly ${C_PROGRAM_ASM_DIR}/${name}.s)
+    set(binary ${PROGRAM_OUTPUT_DIR}/${name}_c.bin)
+
+    add_custom_command(
+        OUTPUT ${assembly}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${C_PROGRAM_ASM_DIR}
+        COMMAND $<TARGET_FILE:Compiler> -o ${assembly} ${source}
+        DEPENDS ${source} Compiler
+        COMMENT "Compiling ${name}.c"
+        VERBATIM
+    )
+    add_custom_command(
+        OUTPUT ${binary}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${PROGRAM_OUTPUT_DIR}
+        COMMAND $<TARGET_FILE:Assembler> -o ${binary} ${assembly}
+        DEPENDS ${assembly} Assembler
+        COMMENT "Assembling ${name}.s (from ${name}.c)"
+        VERBATIM
+    )
+    list(APPEND PROGRAM_BINARIES ${binary})
+
+    add_custom_target(run_${name}_c
+        COMMAND $<TARGET_FILE:Emulator> ${binary}
+        DEPENDS ${binary} Emulator
+        USES_TERMINAL
+        COMMENT "Running ${name}_c"
+    )
+    add_custom_target(simulate_${name}_c
+        COMMAND $<TARGET_FILE:Application> --components ${CMAKE_SOURCE_DIR}/Components
+                --run "ISA16 Computer" --program ${binary} --stats
+        DEPENDS ${binary} Application
+        USES_TERMINAL
+        COMMENT "Simulating ${name}_c on the ISA16 Computer"
+    )
 endforeach()
 
 add_custom_target(programs ALL DEPENDS ${PROGRAM_BINARIES})
@@ -186,6 +243,16 @@ add_test(NAME application_self_test COMMAND Application --self-test)
 # The machine's components (ALU, ...) against the emulator.
 add_test(NAME hardware_check COMMAND Application --components ${CMAKE_SOURCE_DIR}/Components --check-hardware)
 
+# The compiled Fibonacci on the gate-level machine, through the headless --run mode.
+if(TARGET simulate_Fibonacci_c)
+    add_test(NAME simulate_Fibonacci_c COMMAND Application --components ${CMAKE_SOURCE_DIR}/Components
+             --run "ISA16 Computer" --program ${CMAKE_SOURCE_DIR}/Programs/Fibonacci.c)
+    set_tests_properties(simulate_Fibonacci_c PROPERTIES PASS_REGULAR_EXPRESSION "28657 46368" TIMEOUT 600)
+endif()
+
 if(TEST program_Fibonacci)
     set_tests_properties(program_Fibonacci PROPERTIES PASS_REGULAR_EXPRESSION "28657 46368")
+endif()
+if(TEST program_Fibonacci_c)
+    set_tests_properties(program_Fibonacci_c PROPERTIES PASS_REGULAR_EXPRESSION "28657 46368")
 endif()

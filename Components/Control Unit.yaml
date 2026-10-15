@@ -1,0 +1,190 @@
+name: Control Unit
+description: "The microcode sequencer: a 5-bit state register and two 64K-word ROMs, Control A.bin (28 bits) and Control B.bin (22 bits), both made by Tools/make_cpu.py. The ROMs see the state, the opcode, the function (IR2-0, or IR11-8 for SYS), TAKE (the branch condition holds), IRQ and CNTZERO (the shift count ran out); they give every control signal plus the next state, which loads on the rising edge of CLK. Power-up state 0 is RESET."
+nodes:
+  - {id: 1, kind: Input, label: "IR0", at: [40, 40]}
+  - {id: 2, kind: Input, label: "IR1", at: [40, 140]}
+  - {id: 3, kind: Input, label: "IR2", at: [40, 240]}
+  - {id: 4, kind: Input, label: "IR8", at: [40, 340]}
+  - {id: 5, kind: Input, label: "IR9", at: [40, 440]}
+  - {id: 6, kind: Input, label: "IR10", at: [40, 540]}
+  - {id: 7, kind: Input, label: "IR11", at: [40, 640]}
+  - {id: 8, kind: Input, label: "IR12", at: [40, 740]}
+  - {id: 9, kind: Input, label: "IR13", at: [40, 840]}
+  - {id: 10, kind: Input, label: "IR14", at: [40, 940]}
+  - {id: 11, kind: Input, label: "IR15", at: [40, 1040]}
+  - {id: 12, kind: Input, label: "TAKE", at: [40, 1140]}
+  - {id: 13, kind: Input, label: "IRQ", at: [40, 1240]}
+  - {id: 14, kind: Input, label: "CNTZERO", at: [40, 1340]}
+  - {id: 15, kind: Input, label: "CLK", at: [40, 1440]}
+  - {id: 16, kind: Low, at: [300, 40]}
+  - {id: 17, kind: And, at: [300, 160]}
+  - {id: 18, kind: Nor, at: [300, 280]}
+  - {id: 19, kind: And, at: [560, 40]}
+  - {id: 20, component: Mux 2x4, at: [560, 160]}
+  - {id: 21, kind: FlipFlop, at: [820, 40]}
+  - {id: 22, kind: FlipFlop, at: [820, 160]}
+  - {id: 23, kind: FlipFlop, at: [820, 280]}
+  - {id: 24, kind: FlipFlop, at: [820, 400]}
+  - {id: 25, kind: FlipFlop, at: [820, 520]}
+  - id: 26
+    kind: ROM
+    at: [1080, 40]
+    address: 16
+    data: 28
+    inputs: ["S0", "S1", "S2", "S3", "S4", "OP0", "OP1", "OP2", "OP3", "F0", "F1", "F2", "F3", "TAKE", "IRQ", "CNTZERO"]
+    outputs: ["/XRF", "/XPC", "/XEPC", "/XT", "/YRF", "/YIMM", "/APC", "/AMAR", "/WALU", "MLOAD", "/LDPC", "/LDMAR", "/LDEPC", "/LDT", "/LDIR", "RFWE", "WSEL7", "RASYS", "RBDEST", "OP0", "OP1", "OP2", "OP3", "CIN1", "CINC", "IMM0", "IMM1", "IMM2"]
+    image: Control A.bin
+  - id: 27
+    kind: ROM
+    at: [1080, 1142]
+    address: 16
+    data: 22
+    inputs: ["S0", "S1", "S2", "S3", "S4", "OP0", "OP1", "OP2", "OP3", "F0", "F1", "F2", "F3", "TAKE", "IRQ", "CNTZERO"]
+    outputs: ["WZN", "WC", "WV", "RESTORE", "SAVE", "IESET", "IECLR", "ACK", "MREAD", "STORE", "WSTROBE", "WORD", "CNTLOAD", "CNTDEC", "TICK", "HALTED", "ILLEGAL", "N0", "N1", "N2", "N3", "N4"]
+    image: Control B.bin
+  - {id: 28, kind: Output, label: "/XRF", at: [1600, 40]}
+  - {id: 29, kind: Output, label: "/XPC", at: [1600, 140]}
+  - {id: 30, kind: Output, label: "/XEPC", at: [1600, 240]}
+  - {id: 31, kind: Output, label: "/XT", at: [1600, 340]}
+  - {id: 32, kind: Output, label: "/YRF", at: [1600, 440]}
+  - {id: 33, kind: Output, label: "/YIMM", at: [1600, 540]}
+  - {id: 34, kind: Output, label: "/APC", at: [1600, 640]}
+  - {id: 35, kind: Output, label: "/AMAR", at: [1600, 740]}
+  - {id: 36, kind: Output, label: "/WALU", at: [1600, 840]}
+  - {id: 37, kind: Output, label: "MLOAD", at: [1600, 940]}
+  - {id: 38, kind: Output, label: "/LDPC", at: [1600, 1040]}
+  - {id: 39, kind: Output, label: "/LDMAR", at: [1600, 1140]}
+  - {id: 40, kind: Output, label: "/LDEPC", at: [1600, 1240]}
+  - {id: 41, kind: Output, label: "/LDT", at: [1600, 1340]}
+  - {id: 42, kind: Output, label: "/LDIR", at: [1600, 1440]}
+  - {id: 43, kind: Output, label: "RFWE", at: [1600, 1540]}
+  - {id: 44, kind: Output, label: "WSEL7", at: [1600, 1640]}
+  - {id: 45, kind: Output, label: "RASYS", at: [1600, 1740]}
+  - {id: 46, kind: Output, label: "RBDEST", at: [1600, 1840]}
+  - {id: 47, kind: Output, label: "OP0", at: [1600, 1940]}
+  - {id: 48, kind: Output, label: "OP1", at: [1600, 2040]}
+  - {id: 49, kind: Output, label: "OP2", at: [1600, 2140]}
+  - {id: 50, kind: Output, label: "OP3", at: [1600, 2240]}
+  - {id: 51, kind: Output, label: "CIN1", at: [1600, 2340]}
+  - {id: 52, kind: Output, label: "CINC", at: [1600, 2440]}
+  - {id: 53, kind: Output, label: "IMM0", at: [1600, 2540]}
+  - {id: 54, kind: Output, label: "IMM1", at: [1600, 2640]}
+  - {id: 55, kind: Output, label: "IMM2", at: [1600, 2740]}
+  - {id: 56, kind: Output, label: "WZN", at: [1860, 40]}
+  - {id: 57, kind: Output, label: "WC", at: [1860, 140]}
+  - {id: 58, kind: Output, label: "WV", at: [1860, 240]}
+  - {id: 59, kind: Output, label: "RESTORE", at: [1860, 340]}
+  - {id: 60, kind: Output, label: "SAVE", at: [1860, 440]}
+  - {id: 61, kind: Output, label: "IESET", at: [1860, 540]}
+  - {id: 62, kind: Output, label: "IECLR", at: [1860, 640]}
+  - {id: 63, kind: Output, label: "ACK", at: [1860, 740]}
+  - {id: 64, kind: Output, label: "MREAD", at: [1860, 840]}
+  - {id: 65, kind: Output, label: "STORE", at: [1860, 940]}
+  - {id: 66, kind: Output, label: "WSTROBE", at: [1860, 1040]}
+  - {id: 67, kind: Output, label: "WORD", at: [1860, 1140]}
+  - {id: 68, kind: Output, label: "CNTLOAD", at: [1860, 1240]}
+  - {id: 69, kind: Output, label: "CNTDEC", at: [1860, 1340]}
+  - {id: 70, kind: Output, label: "TICK", at: [1860, 1440]}
+  - {id: 71, kind: Output, label: "HALTED", at: [1860, 1540]}
+  - {id: 72, kind: Output, label: "ILLEGAL", at: [1860, 1640]}
+wires:
+  - 11 -> 17.A
+  - 10 -> 17.B
+  - 9 -> 18.A
+  - 8 -> 18.B
+  - 17.Y -> 19.A
+  - 18.Y -> 19.B
+  - 1 -> 20.A0
+  - 4 -> 20.B0
+  - 2 -> 20.A1
+  - 5 -> 20.B1
+  - 3 -> 20.A2
+  - 6 -> 20.B2
+  - 16 -> 20.A3
+  - 7 -> 20.B3
+  - 19.Y -> 20.S
+  - 21.Q -> 26.S0
+  - 22.Q -> 26.S1
+  - 23.Q -> 26.S2
+  - 24.Q -> 26.S3
+  - 25.Q -> 26.S4
+  - 8 -> 26.OP0
+  - 9 -> 26.OP1
+  - 10 -> 26.OP2
+  - 11 -> 26.OP3
+  - 12 -> 26.TAKE
+  - 13 -> 26.IRQ
+  - 14 -> 26.CNTZERO
+  - 16 -> 26./CE
+  - 16 -> 26./OE
+  - 21.Q -> 27.S0
+  - 22.Q -> 27.S1
+  - 23.Q -> 27.S2
+  - 24.Q -> 27.S3
+  - 25.Q -> 27.S4
+  - 8 -> 27.OP0
+  - 9 -> 27.OP1
+  - 10 -> 27.OP2
+  - 11 -> 27.OP3
+  - 12 -> 27.TAKE
+  - 13 -> 27.IRQ
+  - 14 -> 27.CNTZERO
+  - 16 -> 27./CE
+  - 16 -> 27./OE
+  - 27.N0 -> 21.D
+  - 15 -> 21.CLK
+  - 27.N1 -> 22.D
+  - 15 -> 22.CLK
+  - 27.N2 -> 23.D
+  - 15 -> 23.CLK
+  - 27.N3 -> 24.D
+  - 15 -> 24.CLK
+  - 27.N4 -> 25.D
+  - 15 -> 25.CLK
+  - 26./XRF -> 28
+  - 26./XPC -> 29
+  - 26./XEPC -> 30
+  - 26./XT -> 31
+  - 26./YRF -> 32
+  - 26./YIMM -> 33
+  - 26./APC -> 34
+  - 26./AMAR -> 35
+  - 26./WALU -> 36
+  - 26.MLOAD -> 37
+  - 26./LDPC -> 38
+  - 26./LDMAR -> 39
+  - 26./LDEPC -> 40
+  - 26./LDT -> 41
+  - 26./LDIR -> 42
+  - 26.RFWE -> 43
+  - 26.WSEL7 -> 44
+  - 26.RASYS -> 45
+  - 26.RBDEST -> 46
+  - 26.OP0 -> 47
+  - 26.OP1 -> 48
+  - 26.OP2 -> 49
+  - 26.OP3 -> 50
+  - 26.CIN1 -> 51
+  - 26.CINC -> 52
+  - 26.IMM0 -> 53
+  - 26.IMM1 -> 54
+  - 26.IMM2 -> 55
+  - 27.WZN -> 56
+  - 27.WC -> 57
+  - 27.WV -> 58
+  - 27.RESTORE -> 59
+  - 27.SAVE -> 60
+  - 27.IESET -> 61
+  - 27.IECLR -> 62
+  - 27.ACK -> 63
+  - 27.MREAD -> 64
+  - 27.STORE -> 65
+  - 27.WSTROBE -> 66
+  - 27.WORD -> 67
+  - 27.CNTLOAD -> 68
+  - 27.CNTDEC -> 69
+  - 27.TICK -> 70
+  - 27.HALTED -> 71
+  - 27.ILLEGAL -> 72
+  - 20.Y0..Y3 -> 26.F0..F3
+  - 20.Y0..Y3 -> 27.F0..F3

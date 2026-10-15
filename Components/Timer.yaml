@@ -1,0 +1,113 @@
+name: Timer
+description: "The emulator's timer at 0xFF04. Writing N (/CE and /WE low at a rising CLK edge) starts it: every Nth TICK (one per instruction) it requests an interrupt on IRQ until ACK; N = 0 stops it. Reading (/CE and /OE low) gives N back on Q."
+nodes:
+  - {id: 1, kind: Input, label: "D", width: 16, at: [40, 40]}
+  - {id: 2, kind: Input, label: "/CE", at: [40, 140]}
+  - {id: 3, kind: Input, label: "/WE", at: [40, 240]}
+  - {id: 4, kind: Input, label: "/OE", at: [40, 340]}
+  - {id: 5, kind: Input, label: "TICK", at: [40, 440]}
+  - {id: 6, kind: Input, label: "ACK", at: [40, 540]}
+  - {id: 7, kind: Input, label: "CLK", at: [40, 640]}
+  - {id: 8, kind: Output, label: "Q", width: 16, at: [2380, 40]}
+  - {id: 9, kind: Output, label: "IRQ", at: [2380, 140]}
+  - {id: 10, kind: Or, at: [300, 40]}
+  - {id: 11, kind: Not, at: [560, 40]}
+  - {id: 12, component: Register 16, at: [820, 40]}
+  - {id: 13, kind: Or, at: [560, 160]}
+  - {id: 14, kind: Low, at: [560, 280]}
+  - {id: 15, component: Counter 16, at: [1340, 40]}
+  - {id: 16, component: Bus Driver 16, at: [1080, 40]}
+  - {id: 17, component: Bus Driver 16, at: [1080, 484]}
+  - {id: 18, kind: Or, at: [1080, 928]}
+  - {id: 19, kind: Or, at: [1080, 1048]}
+  - {id: 20, kind: Or, at: [1080, 1168]}
+  - {id: 21, kind: Or, at: [1080, 1288]}
+  - {id: 22, kind: Or, at: [1080, 1408]}
+  - {id: 23, kind: Or, at: [1080, 1528]}
+  - {id: 24, kind: Or, at: [1080, 1648]}
+  - {id: 25, kind: Or, at: [1080, 1768]}
+  - {id: 26, kind: Or, at: [1080, 1888]}
+  - {id: 27, kind: Or, at: [1080, 2008]}
+  - {id: 28, kind: Or, at: [1080, 2128]}
+  - {id: 29, kind: Or, at: [1080, 2248]}
+  - {id: 30, kind: Or, at: [1080, 2368]}
+  - {id: 31, kind: Or, at: [1080, 2488]}
+  - {id: 32, kind: Or, at: [1080, 2608]}
+  - {id: 33, kind: And, at: [1600, 40]}
+  - {id: 34, kind: And, at: [1600, 160]}
+  - {id: 35, kind: And, at: [1860, 40]}
+  - {id: 36, kind: Or, at: [1860, 160]}
+  - {id: 37, kind: FlipFlop, at: [2120, 40]}
+  - {id: 38, kind: Or, at: [1860, 280]}
+  - {id: 39, kind: Not, at: [1860, 400]}
+  - {id: 40, kind: And, at: [2120, 160]}
+  - {id: 41, kind: Or, at: [2120, 280]}
+wires:
+  - 2 -> 10.A
+  - 3 -> 10.B
+  - 10.Y -> 11.A
+  - 10.Y -> 12./LOAD
+  - 2 -> 13.A
+  - 4 -> 13.B
+  - 13.Y -> 12./OEB
+  - 14 -> 12./OEA
+  - 7 -> 12.CLK
+  - 10.Y -> 16./OE
+  - 11.Y -> 17./OE
+  - 12.QA0 -> 18.A
+  - 12.QA1 -> 18.B
+  - 12.QA2 -> 19.A
+  - 12.QA3 -> 19.B
+  - 12.QA4 -> 20.A
+  - 12.QA5 -> 20.B
+  - 12.QA6 -> 21.A
+  - 12.QA7 -> 21.B
+  - 12.QA8 -> 22.A
+  - 12.QA9 -> 22.B
+  - 12.QA10 -> 23.A
+  - 12.QA11 -> 23.B
+  - 12.QA12 -> 24.A
+  - 12.QA13 -> 24.B
+  - 12.QA14 -> 25.A
+  - 12.QA15 -> 25.B
+  - 18.Y -> 26.A
+  - 19.Y -> 26.B
+  - 20.Y -> 27.A
+  - 21.Y -> 27.B
+  - 22.Y -> 28.A
+  - 23.Y -> 28.B
+  - 24.Y -> 29.A
+  - 25.Y -> 29.B
+  - 26.Y -> 30.A
+  - 27.Y -> 30.B
+  - 28.Y -> 31.A
+  - 29.Y -> 31.B
+  - 30.Y -> 32.A
+  - 31.Y -> 32.B
+  - 32.Y -> 33.A
+  - 15.ONE -> 33.B
+  - 5 -> 34.A
+  - 32.Y -> 34.B
+  - 5 -> 35.A
+  - 33.Y -> 35.B
+  - 11.Y -> 36.A
+  - 35.Y -> 36.B
+  - 36.Y -> 15.LOAD
+  - 34.Y -> 15.DEC
+  - 7 -> 15.CLK
+  - 37.Q -> 38.A
+  - 35.Y -> 38.B
+  - 6 -> 39.A
+  - 38.Y -> 40.A
+  - 39.Y -> 40.B
+  - 40.Y -> 37.D
+  - 7 -> 37.CLK
+  - 37.Q -> 41.A
+  - 33.Y -> 41.B
+  - 41.Y -> 9
+  - 1 -> 12.D0..D15
+  - 12.QB0..QB15 -> 8
+  - 1 -> 16.A0..A15
+  - 16.Y0..Y15 -> 15.D0..D15
+  - 12.QA0..QA15 -> 17.A0..A15
+  - 17.Y0..Y15 -> 15.D0..D15

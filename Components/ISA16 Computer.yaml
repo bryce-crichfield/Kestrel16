@@ -1,0 +1,65 @@
+name: ISA16 Computer
+description: "The whole machine: ISA16 CPU, 64K of RAM as two 32K x 8 chips (even and odd bytes, preloaded from ../Binary/Programs/Fibonacci.bin), the Terminal at 0xFF00 and the Timer at 0xFF04, picked by an address-decode ROM (Address Decode.bin). Simulate it and run the clock; the program prints in the Terminal pane. To run another program, change the two RAMs' image."
+nodes:
+  - {id: 1, kind: Clock, at: [40, 40]}
+  - {id: 2, component: ISA16 CPU, at: [300, 40]}
+  - {id: 3, kind: Output, label: "HALTED", at: [1340, 40]}
+  - {id: 4, kind: Output, label: "ILLEGAL", at: [1340, 140]}
+  - id: 5
+    kind: ROM
+    at: [560, 40]
+    address: 14
+    data: 3
+    inputs: ["A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10", "A11", "A12", "A13", "A14", "A15"]
+    outputs: ["/RAM", "/TERMINAL", "/TIMER"]
+    image: Address Decode.bin
+  - {id: 6, kind: Low, at: [560, 548]}
+  - id: 7
+    kind: RAM
+    at: [820, 40]
+    address: 15
+    data: 8
+    image: ../Binary/Programs/Fibonacci.bin
+    lane: even
+  - id: 8
+    kind: RAM
+    at: [820, 702]
+    address: 15
+    data: 8
+    image: ../Binary/Programs/Fibonacci.bin
+    lane: odd
+  - {id: 9, kind: Terminal, at: [1080, 40]}
+  - {id: 10, component: Timer, at: [1080, 440]}
+wires:
+  - 1 -> 2.CLK
+  - 6 -> 5./CE
+  - 6 -> 5./OE
+  - 5./RAM -> 7./CE
+  - 2./OE -> 7./OE
+  - 2./WEL -> 7./WE
+  - 5./RAM -> 8./CE
+  - 2./OE -> 8./OE
+  - 2./WEH -> 8./WE
+  - 2.A1 -> 9.RS
+  - 5./TERMINAL -> 9./CE
+  - 2./OE -> 9./OE
+  - 2./WEL -> 9./WE
+  - 5./TIMER -> 10./CE
+  - 2./WEL -> 10./WE
+  - 2./OE -> 10./OE
+  - 2.TICK -> 10.TICK
+  - 2.ACK -> 10.ACK
+  - 1 -> 10.CLK
+  - 10.IRQ -> 2.TIRQ
+  - 2.HALTED -> 3
+  - 2.ILLEGAL -> 4
+  - 2.A2..A15 -> 5.A2..A15
+  - 2.A1..A15 -> 7.A0..A14
+  - 2.DO0..DO7 -> 7.D0..D7
+  - 7.D0..D7 -> 2.DI0..DI7
+  - 2.A1..A15 -> 8.A0..A14
+  - 2.DO8..DO15 -> 8.D0..D7
+  - 8.D0..D7 -> 2.DI8..DI15
+  - 2.DO0..DO7 -> 9.D0..D7
+  - 2.DO0..DO15 -> 10.D0..D15
+  - 10.Q0..Q15 -> 2.DI0..DI15

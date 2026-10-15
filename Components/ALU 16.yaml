@@ -1,46 +1,13 @@
 name: ALU 16
 description: "16-bit ALU from four ROM slices, each a 64K x 8 EEPROM holding ALU Slice.bin (made by Tools/make_alu.py) and working on 4 bits. OP: 0 ADD, 1 SUB, 2 AND, 3 OR, 4 XOR, 5 SHL, 6 SHR, 7 SAR, 8 NOT, 9 NEG, 10 PASSA, 11 PASSB, 12 SXB; 13-15 act as PASSA. Shifts move one bit; the control unit repeats them (B & 15) times. Cin: 0 for ADD, 1 for SUB/CMP/NEG, the C flag for ADC/SBC, shifts and everything else. C: adder carry, the bit shifted out, or Cin passed through. V: overflow for ADD/SUB/NEG. Z and N describe Y. Which flags get stored is up to the control unit."
 nodes:
-  - {id: 1, kind: Input, label: A0, at: [40, 40]}
-  - {id: 2, kind: Input, label: A1, at: [40, 140]}
-  - {id: 3, kind: Input, label: A2, at: [40, 240]}
-  - {id: 4, kind: Input, label: A3, at: [40, 340]}
-  - {id: 5, kind: Input, label: A4, at: [40, 440]}
-  - {id: 6, kind: Input, label: A5, at: [40, 540]}
-  - {id: 7, kind: Input, label: A6, at: [40, 640]}
-  - {id: 8, kind: Input, label: A7, at: [40, 740]}
-  - {id: 9, kind: Input, label: A8, at: [40, 840]}
-  - {id: 10, kind: Input, label: A9, at: [40, 940]}
-  - {id: 11, kind: Input, label: A10, at: [40, 1040]}
-  - {id: 12, kind: Input, label: A11, at: [40, 1140]}
-  - {id: 13, kind: Input, label: A12, at: [40, 1240]}
-  - {id: 14, kind: Input, label: A13, at: [40, 1340]}
-  - {id: 15, kind: Input, label: A14, at: [40, 1440]}
-  - {id: 16, kind: Input, label: A15, at: [40, 1540]}
-  - {id: 17, kind: Input, label: B0, at: [40, 1700]}
-  - {id: 18, kind: Input, label: B1, at: [40, 1800]}
-  - {id: 19, kind: Input, label: B2, at: [40, 1900]}
-  - {id: 20, kind: Input, label: B3, at: [40, 2000]}
-  - {id: 21, kind: Input, label: B4, at: [40, 2100]}
-  - {id: 22, kind: Input, label: B5, at: [40, 2200]}
-  - {id: 23, kind: Input, label: B6, at: [40, 2300]}
-  - {id: 24, kind: Input, label: B7, at: [40, 2400]}
-  - {id: 25, kind: Input, label: B8, at: [40, 2500]}
-  - {id: 26, kind: Input, label: B9, at: [40, 2600]}
-  - {id: 27, kind: Input, label: B10, at: [40, 2700]}
-  - {id: 28, kind: Input, label: B11, at: [40, 2800]}
-  - {id: 29, kind: Input, label: B12, at: [40, 2900]}
-  - {id: 30, kind: Input, label: B13, at: [40, 3000]}
-  - {id: 31, kind: Input, label: B14, at: [40, 3100]}
-  - {id: 32, kind: Input, label: B15, at: [40, 3200]}
-  - {id: 33, kind: Input, label: OP0, at: [40, 3360]}
-  - {id: 34, kind: Input, label: OP1, at: [40, 3460]}
-  - {id: 35, kind: Input, label: OP2, at: [40, 3560]}
-  - {id: 36, kind: Input, label: OP3, at: [40, 3660]}
-  - {id: 37, kind: Input, label: Cin, at: [40, 3780]}
-  - {id: 38, kind: Low, at: [380, 40]}
-  - {id: 39, kind: High, at: [380, 140]}
-  - id: 40
+  - {id: 1, kind: Input, label: A, width: 16, at: [40, 300]}
+  - {id: 2, kind: Input, label: B, width: 16, at: [40, 900]}
+  - {id: 3, kind: Input, label: OP, width: 4, at: [40, 1500]}
+  - {id: 4, kind: Input, label: Cin, at: [40, 2100]}
+  - {id: 5, kind: Low, at: [380, 40]}
+  - {id: 6, kind: High, at: [380, 140]}
+  - id: 7
     kind: ROM
     at: [560, 300]
     address: 16
@@ -48,7 +15,7 @@ nodes:
     inputs: [A0, A1, A2, A3, B0, B1, B2, B3, OP0, OP1, OP2, OP3, Cin, SIN, P0, P1]
     outputs: [Y0, Y1, Y2, Y3, Cout, ZERO, V, NC]
     image: ALU Slice.bin
-  - id: 41
+  - id: 8
     kind: ROM
     at: [560, 1200]
     address: 16
@@ -56,7 +23,7 @@ nodes:
     inputs: [A0, A1, A2, A3, B0, B1, B2, B3, OP0, OP1, OP2, OP3, Cin, SIN, P0, P1]
     outputs: [Y0, Y1, Y2, Y3, Cout, ZERO, V, NC]
     image: ALU Slice.bin
-  - id: 42
+  - id: 9
     kind: ROM
     at: [560, 2100]
     address: 16
@@ -64,7 +31,7 @@ nodes:
     inputs: [A0, A1, A2, A3, B0, B1, B2, B3, OP0, OP1, OP2, OP3, Cin, SIN, P0, P1]
     outputs: [Y0, Y1, Y2, Y3, Cout, ZERO, V, NC]
     image: ALU Slice.bin
-  - id: 43
+  - id: 10
     kind: ROM
     at: [560, 3000]
     address: 16
@@ -72,125 +39,62 @@ nodes:
     inputs: [A0, A1, A2, A3, B0, B1, B2, B3, OP0, OP1, OP2, OP3, Cin, SIN, P0, P1]
     outputs: [Y0, Y1, Y2, Y3, Cout, ZERO, V, NC]
     image: ALU Slice.bin
-  - {id: 44, kind: And, at: [900, 900]}
-  - {id: 45, kind: And, at: [900, 2700]}
-  - {id: 46, kind: And, at: [900, 1800]}
-  - {id: 47, kind: Output, label: Y0, at: [1200, 40]}
-  - {id: 48, kind: Output, label: Y1, at: [1200, 140]}
-  - {id: 49, kind: Output, label: Y2, at: [1200, 240]}
-  - {id: 50, kind: Output, label: Y3, at: [1200, 340]}
-  - {id: 51, kind: Output, label: Y4, at: [1200, 440]}
-  - {id: 52, kind: Output, label: Y5, at: [1200, 540]}
-  - {id: 53, kind: Output, label: Y6, at: [1200, 640]}
-  - {id: 54, kind: Output, label: Y7, at: [1200, 740]}
-  - {id: 55, kind: Output, label: Y8, at: [1200, 840]}
-  - {id: 56, kind: Output, label: Y9, at: [1200, 940]}
-  - {id: 57, kind: Output, label: Y10, at: [1200, 1040]}
-  - {id: 58, kind: Output, label: Y11, at: [1200, 1140]}
-  - {id: 59, kind: Output, label: Y12, at: [1200, 1240]}
-  - {id: 60, kind: Output, label: Y13, at: [1200, 1340]}
-  - {id: 61, kind: Output, label: Y14, at: [1200, 1440]}
-  - {id: 62, kind: Output, label: Y15, at: [1200, 1540]}
-  - {id: 63, kind: Output, label: Z, at: [1200, 1700]}
-  - {id: 64, kind: Output, label: N, at: [1200, 1800]}
-  - {id: 65, kind: Output, label: C, at: [1200, 1900]}
-  - {id: 66, kind: Output, label: V, at: [1200, 2000]}
+  - {id: 11, kind: And, at: [900, 900]}
+  - {id: 12, kind: And, at: [900, 2700]}
+  - {id: 13, kind: And, at: [900, 1800]}
+  - {id: 14, kind: Output, label: Y, width: 16, at: [1200, 300]}
+  - {id: 15, kind: Output, label: Z, at: [1200, 1700]}
+  - {id: 16, kind: Output, label: N, at: [1200, 1800]}
+  - {id: 17, kind: Output, label: C, at: [1200, 1900]}
+  - {id: 18, kind: Output, label: V, at: [1200, 2000]}
 wires:
-  - 1 -> 40.A0
-  - 17 -> 40.B0
-  - 40.Y0 -> 47
-  - 33 -> 40.OP0
-  - 2 -> 40.A1
-  - 18 -> 40.B1
-  - 40.Y1 -> 48
-  - 34 -> 40.OP1
-  - 3 -> 40.A2
-  - 19 -> 40.B2
-  - 40.Y2 -> 49
-  - 35 -> 40.OP2
-  - 4 -> 40.A3
-  - 20 -> 40.B3
-  - 40.Y3 -> 50
-  - 36 -> 40.OP3
-  - 37 -> 40.Cin
-  - 5 -> 40.SIN
-  - 38 -> 40.P0
-  - 38 -> 40.P1
-  - 38 -> 40./CE
-  - 38 -> 40./OE
-  - 5 -> 41.A0
-  - 21 -> 41.B0
-  - 41.Y0 -> 51
-  - 33 -> 41.OP0
-  - 6 -> 41.A1
-  - 22 -> 41.B1
-  - 41.Y1 -> 52
-  - 34 -> 41.OP1
-  - 7 -> 41.A2
-  - 23 -> 41.B2
-  - 41.Y2 -> 53
-  - 35 -> 41.OP2
-  - 8 -> 41.A3
-  - 24 -> 41.B3
-  - 41.Y3 -> 54
-  - 36 -> 41.OP3
-  - 40.Cout -> 41.Cin
-  - 9 -> 41.SIN
-  - 39 -> 41.P0
-  - 38 -> 41.P1
-  - 38 -> 41./CE
-  - 38 -> 41./OE
-  - 9 -> 42.A0
-  - 25 -> 42.B0
-  - 42.Y0 -> 55
-  - 33 -> 42.OP0
-  - 10 -> 42.A1
-  - 26 -> 42.B1
-  - 42.Y1 -> 56
-  - 34 -> 42.OP1
-  - 11 -> 42.A2
-  - 27 -> 42.B2
-  - 42.Y2 -> 57
-  - 35 -> 42.OP2
-  - 12 -> 42.A3
-  - 28 -> 42.B3
-  - 42.Y3 -> 58
-  - 36 -> 42.OP3
-  - 41.Cout -> 42.Cin
-  - 13 -> 42.SIN
-  - 38 -> 42.P0
-  - 39 -> 42.P1
-  - 38 -> 42./CE
-  - 38 -> 42./OE
-  - 13 -> 43.A0
-  - 29 -> 43.B0
-  - 43.Y0 -> 59
-  - 33 -> 43.OP0
-  - 14 -> 43.A1
-  - 30 -> 43.B1
-  - 43.Y1 -> 60
-  - 34 -> 43.OP1
-  - 15 -> 43.A2
-  - 31 -> 43.B2
-  - 43.Y2 -> 61
-  - 35 -> 43.OP2
-  - 16 -> 43.A3
-  - 32 -> 43.B3
-  - 43.Y3 -> 62
-  - 36 -> 43.OP3
-  - 42.Cout -> 43.Cin
-  - 38 -> 43.SIN
-  - 39 -> 43.P0
-  - 39 -> 43.P1
-  - 38 -> 43./CE
-  - 38 -> 43./OE
-  - 40.ZERO -> 44.A
-  - 41.ZERO -> 44.B
-  - 42.ZERO -> 45.A
-  - 43.ZERO -> 45.B
-  - 44.Y -> 46.A
-  - 45.Y -> 46.B
-  - 46.Y -> 63
-  - 43.Y3 -> 64
-  - 43.Cout -> 65
-  - 43.V -> 66
+  - 1.A0..A3 -> 7.A0..A3
+  - 2.B0..B3 -> 7.B0..B3
+  - 7.Y0..Y3 -> 14.Y0..Y3
+  - 3 -> 7.OP0..OP3
+  - 4 -> 7.Cin
+  - 1.A4 -> 7.SIN
+  - 5 -> 7.P0
+  - 5 -> 7.P1
+  - 5 -> 7./CE
+  - 5 -> 7./OE
+  - 1.A4..A7 -> 8.A0..A3
+  - 2.B4..B7 -> 8.B0..B3
+  - 8.Y0..Y3 -> 14.Y4..Y7
+  - 3 -> 8.OP0..OP3
+  - 7.Cout -> 8.Cin
+  - 1.A8 -> 8.SIN
+  - 6 -> 8.P0
+  - 5 -> 8.P1
+  - 5 -> 8./CE
+  - 5 -> 8./OE
+  - 1.A8..A11 -> 9.A0..A3
+  - 2.B8..B11 -> 9.B0..B3
+  - 9.Y0..Y3 -> 14.Y8..Y11
+  - 3 -> 9.OP0..OP3
+  - 8.Cout -> 9.Cin
+  - 1.A12 -> 9.SIN
+  - 5 -> 9.P0
+  - 6 -> 9.P1
+  - 5 -> 9./CE
+  - 5 -> 9./OE
+  - 1.A12..A15 -> 10.A0..A3
+  - 2.B12..B15 -> 10.B0..B3
+  - 10.Y0..Y3 -> 14.Y12..Y15
+  - 3 -> 10.OP0..OP3
+  - 9.Cout -> 10.Cin
+  - 5 -> 10.SIN
+  - 6 -> 10.P0
+  - 6 -> 10.P1
+  - 5 -> 10./CE
+  - 5 -> 10./OE
+  - 7.ZERO -> 11.A
+  - 8.ZERO -> 11.B
+  - 9.ZERO -> 12.A
+  - 10.ZERO -> 12.B
+  - 11.Y -> 13.A
+  - 12.Y -> 13.B
+  - 13.Y -> 15
+  - 10.Y3 -> 16
+  - 10.Cout -> 17
+  - 10.V -> 18

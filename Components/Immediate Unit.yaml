@@ -1,0 +1,105 @@
+name: Immediate Unit
+description: "Puts one constant from the instruction onto Y (while /OE is 0), picked by SEL: 0 imm6 sign-extended, 1 imm8 zero-extended, 2 LHI's value (imm8 in the high byte, OLD0-7 in the low), 3 offset8 x 2 sign-extended, 4 offset12 x 2 sign-extended, 5 the constant 2 (instruction size and interrupt vector), 6 zero. All wiring: each choice is a Bus Driver 16 whose inputs are instruction bits, OLD bits (the destination register's old value, for LHI) or Low/High."
+nodes:
+  - {id: 1, kind: Input, label: "IR", width: 12, at: [40, 40]}
+  - {id: 2, kind: Input, label: "OLD", width: 8, at: [40, 140]}
+  - {id: 3, kind: Input, label: "SEL", width: 3, at: [40, 240]}
+  - {id: 4, kind: Input, label: "/OE", at: [40, 340]}
+  - {id: 5, kind: Output, label: "Y", width: 16, at: [1340, 40]}
+  - {id: 6, kind: Low, at: [300, 40]}
+  - {id: 7, kind: High, at: [300, 160]}
+  - {id: 8, component: Decoder 3to8, at: [560, 40]}
+  - {id: 9, kind: Not, at: [300, 280]}
+  - {id: 10, component: Bus Driver 16, at: [820, 40]}
+  - {id: 11, component: Bus Driver 16, at: [1080, 40]}
+  - {id: 12, component: Bus Driver 16, at: [820, 484]}
+  - {id: 13, component: Bus Driver 16, at: [1080, 484]}
+  - {id: 14, component: Bus Driver 16, at: [820, 928]}
+  - {id: 15, component: Bus Driver 16, at: [1080, 928]}
+  - {id: 16, component: Bus Driver 16, at: [820, 1372]}
+wires:
+  - 4 -> 9.A
+  - 9.Y -> 8.E
+  - 8./Y0 -> 10./OE
+  - 6 -> 11.A8
+  - 6 -> 11.A9
+  - 6 -> 11.A10
+  - 6 -> 11.A11
+  - 6 -> 11.A12
+  - 6 -> 11.A13
+  - 6 -> 11.A14
+  - 6 -> 11.A15
+  - 8./Y1 -> 11./OE
+  - 8./Y2 -> 12./OE
+  - 6 -> 13.A0
+  - 8./Y3 -> 13./OE
+  - 6 -> 14.A0
+  - 8./Y4 -> 14./OE
+  - 6 -> 15.A0
+  - 7 -> 15.A1
+  - 6 -> 15.A2
+  - 6 -> 15.A3
+  - 6 -> 15.A4
+  - 6 -> 15.A5
+  - 6 -> 15.A6
+  - 6 -> 15.A7
+  - 6 -> 15.A8
+  - 6 -> 15.A9
+  - 6 -> 15.A10
+  - 6 -> 15.A11
+  - 6 -> 15.A12
+  - 6 -> 15.A13
+  - 6 -> 15.A14
+  - 6 -> 15.A15
+  - 8./Y5 -> 15./OE
+  - 6 -> 16.A0
+  - 6 -> 16.A1
+  - 6 -> 16.A2
+  - 6 -> 16.A3
+  - 6 -> 16.A4
+  - 6 -> 16.A5
+  - 6 -> 16.A6
+  - 6 -> 16.A7
+  - 6 -> 16.A8
+  - 6 -> 16.A9
+  - 6 -> 16.A10
+  - 6 -> 16.A11
+  - 6 -> 16.A12
+  - 6 -> 16.A13
+  - 6 -> 16.A14
+  - 6 -> 16.A15
+  - 8./Y6 -> 16./OE
+  - 3 -> 8.A0..A2
+  - 1.IR0..IR5 -> 10.A0..A5
+  - 1.IR5 -> 10.A6
+  - 1.IR5 -> 10.A7
+  - 1.IR5 -> 10.A8
+  - 1.IR5 -> 10.A9
+  - 1.IR5 -> 10.A10
+  - 1.IR5 -> 10.A11
+  - 1.IR5 -> 10.A12
+  - 1.IR5 -> 10.A13
+  - 1.IR5 -> 10.A14
+  - 1.IR5 -> 10.A15
+  - 10.Y0..Y15 -> 5
+  - 1.IR0..IR7 -> 11.A0..A7
+  - 11.Y0..Y15 -> 5
+  - 2 -> 12.A0..A7
+  - 1.IR0..IR7 -> 12.A8..A15
+  - 12.Y0..Y15 -> 5
+  - 1.IR0..IR7 -> 13.A1..A8
+  - 1.IR7 -> 13.A9
+  - 1.IR7 -> 13.A10
+  - 1.IR7 -> 13.A11
+  - 1.IR7 -> 13.A12
+  - 1.IR7 -> 13.A13
+  - 1.IR7 -> 13.A14
+  - 1.IR7 -> 13.A15
+  - 13.Y0..Y15 -> 5
+  - 1 -> 14.A1..A12
+  - 1.IR11 -> 14.A13
+  - 1.IR11 -> 14.A14
+  - 1.IR11 -> 14.A15
+  - 14.Y0..Y15 -> 5
+  - 15.Y0..Y15 -> 5
+  - 16.Y0..Y15 -> 5

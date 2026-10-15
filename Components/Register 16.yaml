@@ -1,0 +1,333 @@
+name: Register 16
+description: "16-bit register. On the rising edge of CLK it loads D if /LOAD is 0 and keeps its value otherwise. Two tri-state read ports: QA drives while /OEA is 0, QB while /OEB is 0. In 74HC terms: two 74HC377s and four 74HC541s."
+nodes:
+  - {id: 1, kind: Input, label: "D", width: 16, at: [40, 40]}
+  - {id: 2, kind: Input, label: "/LOAD", at: [40, 140]}
+  - {id: 3, kind: Input, label: "CLK", at: [40, 240]}
+  - {id: 4, kind: Input, label: "/OEA", at: [40, 340]}
+  - {id: 5, kind: Input, label: "/OEB", at: [40, 440]}
+  - {id: 6, kind: Not, at: [300, 40]}
+  - {id: 7, kind: Output, label: "QA", width: 16, at: [1340, 40]}
+  - {id: 8, kind: Output, label: "QB", width: 16, at: [1600, 40]}
+  - {id: 9, kind: FlipFlop, at: [820, 40]}
+  - {id: 10, kind: And, at: [300, 160]}
+  - {id: 11, kind: And, at: [300, 280]}
+  - {id: 12, kind: Or, at: [560, 40]}
+  - {id: 13, kind: TriState, at: [1080, 40]}
+  - {id: 14, kind: TriState, at: [1080, 160]}
+  - {id: 15, kind: FlipFlop, at: [820, 160]}
+  - {id: 16, kind: And, at: [300, 400]}
+  - {id: 17, kind: And, at: [300, 520]}
+  - {id: 18, kind: Or, at: [560, 160]}
+  - {id: 19, kind: TriState, at: [1080, 280]}
+  - {id: 20, kind: TriState, at: [1080, 400]}
+  - {id: 21, kind: FlipFlop, at: [820, 280]}
+  - {id: 22, kind: And, at: [300, 640]}
+  - {id: 23, kind: And, at: [300, 760]}
+  - {id: 24, kind: Or, at: [560, 280]}
+  - {id: 25, kind: TriState, at: [1080, 520]}
+  - {id: 26, kind: TriState, at: [1080, 640]}
+  - {id: 27, kind: FlipFlop, at: [820, 400]}
+  - {id: 28, kind: And, at: [300, 880]}
+  - {id: 29, kind: And, at: [300, 1000]}
+  - {id: 30, kind: Or, at: [560, 400]}
+  - {id: 31, kind: TriState, at: [1080, 760]}
+  - {id: 32, kind: TriState, at: [1080, 880]}
+  - {id: 33, kind: FlipFlop, at: [820, 520]}
+  - {id: 34, kind: And, at: [300, 1120]}
+  - {id: 35, kind: And, at: [300, 1240]}
+  - {id: 36, kind: Or, at: [560, 520]}
+  - {id: 37, kind: TriState, at: [1080, 1000]}
+  - {id: 38, kind: TriState, at: [1080, 1120]}
+  - {id: 39, kind: FlipFlop, at: [820, 640]}
+  - {id: 40, kind: And, at: [300, 1360]}
+  - {id: 41, kind: And, at: [300, 1480]}
+  - {id: 42, kind: Or, at: [560, 640]}
+  - {id: 43, kind: TriState, at: [1080, 1240]}
+  - {id: 44, kind: TriState, at: [1080, 1360]}
+  - {id: 45, kind: FlipFlop, at: [820, 760]}
+  - {id: 46, kind: And, at: [300, 1600]}
+  - {id: 47, kind: And, at: [300, 1720]}
+  - {id: 48, kind: Or, at: [560, 760]}
+  - {id: 49, kind: TriState, at: [1080, 1480]}
+  - {id: 50, kind: TriState, at: [1080, 1600]}
+  - {id: 51, kind: FlipFlop, at: [820, 880]}
+  - {id: 52, kind: And, at: [300, 1840]}
+  - {id: 53, kind: And, at: [300, 1960]}
+  - {id: 54, kind: Or, at: [560, 880]}
+  - {id: 55, kind: TriState, at: [1080, 1720]}
+  - {id: 56, kind: TriState, at: [1080, 1840]}
+  - {id: 57, kind: FlipFlop, at: [820, 1000]}
+  - {id: 58, kind: And, at: [300, 2080]}
+  - {id: 59, kind: And, at: [300, 2200]}
+  - {id: 60, kind: Or, at: [560, 1000]}
+  - {id: 61, kind: TriState, at: [1080, 1960]}
+  - {id: 62, kind: TriState, at: [1080, 2080]}
+  - {id: 63, kind: FlipFlop, at: [820, 1120]}
+  - {id: 64, kind: And, at: [300, 2320]}
+  - {id: 65, kind: And, at: [300, 2440]}
+  - {id: 66, kind: Or, at: [560, 1120]}
+  - {id: 67, kind: TriState, at: [1080, 2200]}
+  - {id: 68, kind: TriState, at: [1080, 2320]}
+  - {id: 69, kind: FlipFlop, at: [820, 1240]}
+  - {id: 70, kind: And, at: [300, 2560]}
+  - {id: 71, kind: And, at: [300, 2680]}
+  - {id: 72, kind: Or, at: [560, 1240]}
+  - {id: 73, kind: TriState, at: [1080, 2440]}
+  - {id: 74, kind: TriState, at: [1080, 2560]}
+  - {id: 75, kind: FlipFlop, at: [820, 1360]}
+  - {id: 76, kind: And, at: [300, 2800]}
+  - {id: 77, kind: And, at: [300, 2920]}
+  - {id: 78, kind: Or, at: [560, 1360]}
+  - {id: 79, kind: TriState, at: [1080, 2680]}
+  - {id: 80, kind: TriState, at: [1080, 2800]}
+  - {id: 81, kind: FlipFlop, at: [820, 1480]}
+  - {id: 82, kind: And, at: [300, 3040]}
+  - {id: 83, kind: And, at: [300, 3160]}
+  - {id: 84, kind: Or, at: [560, 1480]}
+  - {id: 85, kind: TriState, at: [1080, 2920]}
+  - {id: 86, kind: TriState, at: [1080, 3040]}
+  - {id: 87, kind: FlipFlop, at: [820, 1600]}
+  - {id: 88, kind: And, at: [300, 3280]}
+  - {id: 89, kind: And, at: [300, 3400]}
+  - {id: 90, kind: Or, at: [560, 1600]}
+  - {id: 91, kind: TriState, at: [1080, 3160]}
+  - {id: 92, kind: TriState, at: [1080, 3280]}
+  - {id: 93, kind: FlipFlop, at: [820, 1720]}
+  - {id: 94, kind: And, at: [300, 3520]}
+  - {id: 95, kind: And, at: [300, 3640]}
+  - {id: 96, kind: Or, at: [560, 1720]}
+  - {id: 97, kind: TriState, at: [1080, 3400]}
+  - {id: 98, kind: TriState, at: [1080, 3520]}
+  - {id: 99, kind: FlipFlop, at: [820, 1840]}
+  - {id: 100, kind: And, at: [300, 3760]}
+  - {id: 101, kind: And, at: [300, 3880]}
+  - {id: 102, kind: Or, at: [560, 1840]}
+  - {id: 103, kind: TriState, at: [1080, 3640]}
+  - {id: 104, kind: TriState, at: [1080, 3760]}
+wires:
+  - 2 -> 6.A
+  - 1.D0 -> 10.A
+  - 6.Y -> 10.B
+  - 9.Q -> 11.A
+  - 2 -> 11.B
+  - 10.Y -> 12.A
+  - 11.Y -> 12.B
+  - 12.Y -> 9.D
+  - 3 -> 9.CLK
+  - 9.Q -> 13.A
+  - 4 -> 13./OE
+  - 13.Y -> 7.QA0
+  - 9.Q -> 14.A
+  - 5 -> 14./OE
+  - 14.Y -> 8.QB0
+  - 1.D1 -> 16.A
+  - 6.Y -> 16.B
+  - 15.Q -> 17.A
+  - 2 -> 17.B
+  - 16.Y -> 18.A
+  - 17.Y -> 18.B
+  - 18.Y -> 15.D
+  - 3 -> 15.CLK
+  - 15.Q -> 19.A
+  - 4 -> 19./OE
+  - 19.Y -> 7.QA1
+  - 15.Q -> 20.A
+  - 5 -> 20./OE
+  - 20.Y -> 8.QB1
+  - 1.D2 -> 22.A
+  - 6.Y -> 22.B
+  - 21.Q -> 23.A
+  - 2 -> 23.B
+  - 22.Y -> 24.A
+  - 23.Y -> 24.B
+  - 24.Y -> 21.D
+  - 3 -> 21.CLK
+  - 21.Q -> 25.A
+  - 4 -> 25./OE
+  - 25.Y -> 7.QA2
+  - 21.Q -> 26.A
+  - 5 -> 26./OE
+  - 26.Y -> 8.QB2
+  - 1.D3 -> 28.A
+  - 6.Y -> 28.B
+  - 27.Q -> 29.A
+  - 2 -> 29.B
+  - 28.Y -> 30.A
+  - 29.Y -> 30.B
+  - 30.Y -> 27.D
+  - 3 -> 27.CLK
+  - 27.Q -> 31.A
+  - 4 -> 31./OE
+  - 31.Y -> 7.QA3
+  - 27.Q -> 32.A
+  - 5 -> 32./OE
+  - 32.Y -> 8.QB3
+  - 1.D4 -> 34.A
+  - 6.Y -> 34.B
+  - 33.Q -> 35.A
+  - 2 -> 35.B
+  - 34.Y -> 36.A
+  - 35.Y -> 36.B
+  - 36.Y -> 33.D
+  - 3 -> 33.CLK
+  - 33.Q -> 37.A
+  - 4 -> 37./OE
+  - 37.Y -> 7.QA4
+  - 33.Q -> 38.A
+  - 5 -> 38./OE
+  - 38.Y -> 8.QB4
+  - 1.D5 -> 40.A
+  - 6.Y -> 40.B
+  - 39.Q -> 41.A
+  - 2 -> 41.B
+  - 40.Y -> 42.A
+  - 41.Y -> 42.B
+  - 42.Y -> 39.D
+  - 3 -> 39.CLK
+  - 39.Q -> 43.A
+  - 4 -> 43./OE
+  - 43.Y -> 7.QA5
+  - 39.Q -> 44.A
+  - 5 -> 44./OE
+  - 44.Y -> 8.QB5
+  - 1.D6 -> 46.A
+  - 6.Y -> 46.B
+  - 45.Q -> 47.A
+  - 2 -> 47.B
+  - 46.Y -> 48.A
+  - 47.Y -> 48.B
+  - 48.Y -> 45.D
+  - 3 -> 45.CLK
+  - 45.Q -> 49.A
+  - 4 -> 49./OE
+  - 49.Y -> 7.QA6
+  - 45.Q -> 50.A
+  - 5 -> 50./OE
+  - 50.Y -> 8.QB6
+  - 1.D7 -> 52.A
+  - 6.Y -> 52.B
+  - 51.Q -> 53.A
+  - 2 -> 53.B
+  - 52.Y -> 54.A
+  - 53.Y -> 54.B
+  - 54.Y -> 51.D
+  - 3 -> 51.CLK
+  - 51.Q -> 55.A
+  - 4 -> 55./OE
+  - 55.Y -> 7.QA7
+  - 51.Q -> 56.A
+  - 5 -> 56./OE
+  - 56.Y -> 8.QB7
+  - 1.D8 -> 58.A
+  - 6.Y -> 58.B
+  - 57.Q -> 59.A
+  - 2 -> 59.B
+  - 58.Y -> 60.A
+  - 59.Y -> 60.B
+  - 60.Y -> 57.D
+  - 3 -> 57.CLK
+  - 57.Q -> 61.A
+  - 4 -> 61./OE
+  - 61.Y -> 7.QA8
+  - 57.Q -> 62.A
+  - 5 -> 62./OE
+  - 62.Y -> 8.QB8
+  - 1.D9 -> 64.A
+  - 6.Y -> 64.B
+  - 63.Q -> 65.A
+  - 2 -> 65.B
+  - 64.Y -> 66.A
+  - 65.Y -> 66.B
+  - 66.Y -> 63.D
+  - 3 -> 63.CLK
+  - 63.Q -> 67.A
+  - 4 -> 67./OE
+  - 67.Y -> 7.QA9
+  - 63.Q -> 68.A
+  - 5 -> 68./OE
+  - 68.Y -> 8.QB9
+  - 1.D10 -> 70.A
+  - 6.Y -> 70.B
+  - 69.Q -> 71.A
+  - 2 -> 71.B
+  - 70.Y -> 72.A
+  - 71.Y -> 72.B
+  - 72.Y -> 69.D
+  - 3 -> 69.CLK
+  - 69.Q -> 73.A
+  - 4 -> 73./OE
+  - 73.Y -> 7.QA10
+  - 69.Q -> 74.A
+  - 5 -> 74./OE
+  - 74.Y -> 8.QB10
+  - 1.D11 -> 76.A
+  - 6.Y -> 76.B
+  - 75.Q -> 77.A
+  - 2 -> 77.B
+  - 76.Y -> 78.A
+  - 77.Y -> 78.B
+  - 78.Y -> 75.D
+  - 3 -> 75.CLK
+  - 75.Q -> 79.A
+  - 4 -> 79./OE
+  - 79.Y -> 7.QA11
+  - 75.Q -> 80.A
+  - 5 -> 80./OE
+  - 80.Y -> 8.QB11
+  - 1.D12 -> 82.A
+  - 6.Y -> 82.B
+  - 81.Q -> 83.A
+  - 2 -> 83.B
+  - 82.Y -> 84.A
+  - 83.Y -> 84.B
+  - 84.Y -> 81.D
+  - 3 -> 81.CLK
+  - 81.Q -> 85.A
+  - 4 -> 85./OE
+  - 85.Y -> 7.QA12
+  - 81.Q -> 86.A
+  - 5 -> 86./OE
+  - 86.Y -> 8.QB12
+  - 1.D13 -> 88.A
+  - 6.Y -> 88.B
+  - 87.Q -> 89.A
+  - 2 -> 89.B
+  - 88.Y -> 90.A
+  - 89.Y -> 90.B
+  - 90.Y -> 87.D
+  - 3 -> 87.CLK
+  - 87.Q -> 91.A
+  - 4 -> 91./OE
+  - 91.Y -> 7.QA13
+  - 87.Q -> 92.A
+  - 5 -> 92./OE
+  - 92.Y -> 8.QB13
+  - 1.D14 -> 94.A
+  - 6.Y -> 94.B
+  - 93.Q -> 95.A
+  - 2 -> 95.B
+  - 94.Y -> 96.A
+  - 95.Y -> 96.B
+  - 96.Y -> 93.D
+  - 3 -> 93.CLK
+  - 93.Q -> 97.A
+  - 4 -> 97./OE
+  - 97.Y -> 7.QA14
+  - 93.Q -> 98.A
+  - 5 -> 98./OE
+  - 98.Y -> 8.QB14
+  - 1.D15 -> 100.A
+  - 6.Y -> 100.B
+  - 99.Q -> 101.A
+  - 2 -> 101.B
+  - 100.Y -> 102.A
+  - 101.Y -> 102.B
+  - 102.Y -> 99.D
+  - 3 -> 99.CLK
+  - 99.Q -> 103.A
+  - 4 -> 103./OE
+  - 103.Y -> 7.QA15
+  - 99.Q -> 104.A
+  - 5 -> 104./OE
+  - 104.Y -> 8.QB15

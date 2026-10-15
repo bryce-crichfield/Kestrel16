@@ -1,0 +1,71 @@
+name: Bus Driver 16
+description: "16 tri-state buffers: Y = A while /OE is 0, otherwise Y lets go. Like a 74HC541."
+nodes:
+  - {id: 1, kind: Input, label: "A", width: 16, at: [40, 40]}
+  - {id: 2, kind: Input, label: "/OE", at: [40, 140]}
+  - {id: 3, kind: Output, label: "Y", width: 16, at: [560, 40]}
+  - {id: 4, kind: TriState, at: [300, 40]}
+  - {id: 5, kind: TriState, at: [300, 160]}
+  - {id: 6, kind: TriState, at: [300, 280]}
+  - {id: 7, kind: TriState, at: [300, 400]}
+  - {id: 8, kind: TriState, at: [300, 520]}
+  - {id: 9, kind: TriState, at: [300, 640]}
+  - {id: 10, kind: TriState, at: [300, 760]}
+  - {id: 11, kind: TriState, at: [300, 880]}
+  - {id: 12, kind: TriState, at: [300, 1000]}
+  - {id: 13, kind: TriState, at: [300, 1120]}
+  - {id: 14, kind: TriState, at: [300, 1240]}
+  - {id: 15, kind: TriState, at: [300, 1360]}
+  - {id: 16, kind: TriState, at: [300, 1480]}
+  - {id: 17, kind: TriState, at: [300, 1600]}
+  - {id: 18, kind: TriState, at: [300, 1720]}
+  - {id: 19, kind: TriState, at: [300, 1840]}
+wires:
+  - 1.A0 -> 4.A
+  - 2 -> 4./OE
+  - 4.Y -> 3.Y0
+  - 1.A1 -> 5.A
+  - 2 -> 5./OE
+  - 5.Y -> 3.Y1
+  - 1.A2 -> 6.A
+  - 2 -> 6./OE
+  - 6.Y -> 3.Y2
+  - 1.A3 -> 7.A
+  - 2 -> 7./OE
+  - 7.Y -> 3.Y3
+  - 1.A4 -> 8.A
+  - 2 -> 8./OE
+  - 8.Y -> 3.Y4
+  - 1.A5 -> 9.A
+  - 2 -> 9./OE
+  - 9.Y -> 3.Y5
+  - 1.A6 -> 10.A
+  - 2 -> 10./OE
+  - 10.Y -> 3.Y6
+  - 1.A7 -> 11.A
+  - 2 -> 11./OE
+  - 11.Y -> 3.Y7
+  - 1.A8 -> 12.A
+  - 2 -> 12./OE
+  - 12.Y -> 3.Y8
+  - 1.A9 -> 13.A
+  - 2 -> 13./OE
+  - 13.Y -> 3.Y9
+  - 1.A10 -> 14.A
+  - 2 -> 14./OE
+  - 14.Y -> 3.Y10
+  - 1.A11 -> 15.A
+  - 2 -> 15./OE
+  - 15.Y -> 3.Y11
+  - 1.A12 -> 16.A
+  - 2 -> 16./OE
+  - 16.Y -> 3.Y12
+  - 1.A13 -> 17.A
+  - 2 -> 17./OE
+  - 17.Y -> 3.Y13
+  - 1.A14 -> 18.A
+  - 2 -> 18./OE
+  - 18.Y -> 3.Y14
+  - 1.A15 -> 19.A
+  - 2 -> 19./OE
+  - 19.Y -> 3.Y15

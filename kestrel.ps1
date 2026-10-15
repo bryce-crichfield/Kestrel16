@@ -1,10 +1,10 @@
 param()
 
 # Get the root path
-$Environment_ROOT = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Kestrel_ROOT = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-function Environment_Setup {
-    Write-Host "Setting up Environment environment..."
+function Kestrel_Setup {
+    Write-Host "Setting up Kestrel environment..."
 
     git submodule update --init --recursive
 
@@ -49,32 +49,32 @@ function Environment_Setup {
     # Clean package cache
     & "$msys64Path\usr\bin\bash.exe" -lc "pacman -Scc --noconfirm"
     
-    Write-Host "Environment environment setup completed!"
+    Write-Host "Kestrel environment setup completed!"
 }
-function Environment_Clean {
+function Kestrel_Clean {
     Write-Host "Cleaning build artifacts..."
-    if (Test-Path "$Environment_ROOT\Build") {
-        Remove-Item -Recurse -Force "$Environment_ROOT\Build"
+    if (Test-Path "$Kestrel_ROOT\Build") {
+        Remove-Item -Recurse -Force "$Kestrel_ROOT\Build"
     }
-    if (Test-Path "$Environment_ROOT\Binary") {
-        Remove-Item -Recurse -Force "$Environment_ROOT\Binary"
+    if (Test-Path "$Kestrel_ROOT\Binary") {
+        Remove-Item -Recurse -Force "$Kestrel_ROOT\Binary"
     }
     Write-Host "Clean complete"
 }
 
-function Environment_Build {
+function Kestrel_Build {
     param([bool]$Tracy, [string]$Mode, [string]$Target)
     # Release is CMake's RelWithDebInfo: -O2, with symbols kept so Tracy and gdb still read it.
     $buildType = if ($Mode -eq "Release") { "RelWithDebInfo" } else { "Debug" }
-    Write-Host "Building Environment ($Mode)..."
+    Write-Host "Building Kestrel ($Mode)..."
     $currentLocation = Get-Location
 
     try {
         # Create necessary directories
-        New-Item -ItemType Directory -Force -Path "$Environment_ROOT\Build" | Out-Null
-        New-Item -ItemType Directory -Force -Path "$Environment_ROOT\Binary" | Out-Null
+        New-Item -ItemType Directory -Force -Path "$Kestrel_ROOT\Build" | Out-Null
+        New-Item -ItemType Directory -Force -Path "$Kestrel_ROOT\Binary" | Out-Null
 
-        Set-Location "$Environment_ROOT"
+        Set-Location "$Kestrel_ROOT"
 
         # Use Ninja generator with MinGW and override shell
         $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
@@ -87,10 +87,10 @@ function Environment_Build {
         $linkStatic = if ($Tracy) { "-static-libgcc -static-libstdc++" } else { "-static -static-libgcc -static-libstdc++" }
         cmake -G "Ninja" -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_MAKE_PROGRAM=ninja "-DCMAKE_BUILD_TYPE=$buildType" "-DTRACY_ENABLE=$tracyOption" "-DCMAKE_EXE_LINKER_FLAGS=$linkStatic" -B Build
         if ($LASTEXITCODE -eq 0) {
-            # --Target builds one layer (EnvironmentCore, EnvironmentServices, EnvironmentEditor) or the Environment exe.
+            # --Target builds one layer (KestrelCore, KestrelServices, KestrelEditor) or the Kestrel exe.
             if ($Target) { cmake --build Build --target $Target } else { cmake --build Build }
             if ($Tracy) {
-                Copy-Item "C:\msys64\mingw64\bin\libwinpthread-1.dll" "$Environment_ROOT\Binary" -Force
+                Copy-Item "C:\msys64\mingw64\bin\libwinpthread-1.dll" "$Kestrel_ROOT\Binary" -Force
             }
         }
     }
@@ -99,12 +99,12 @@ function Environment_Build {
     }
 }
 
-function Environment_Test {
-    & "$Environment_ROOT\Binary\EnvironmentTests.exe"
+function Kestrel_Test {
+    & "$Kestrel_ROOT\Binary\KestrelTests.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
-function Environment_Run {
+function Kestrel_Run {
     param(
         [string]$ProjectPath,
         [bool]$EditorMode
@@ -113,7 +113,7 @@ function Environment_Run {
     $currentLocation = Get-Location
 
     try {
-        Set-Location "$Environment_ROOT\Binary"
+        Set-Location "$Kestrel_ROOT\Binary"
 
         if ([string]::IsNullOrEmpty($ProjectPath)) {
             throw "Project path is required. Specify it with --Project=<path>."
@@ -124,7 +124,7 @@ function Environment_Run {
         if ([System.IO.Path]::IsPathRooted($ProjectPath)) {
             $resolvedProject = $ProjectPath
         } else {
-            $resolvedProject = "$Environment_ROOT\$ProjectPath"
+            $resolvedProject = "$Kestrel_ROOT\$ProjectPath"
         }
 
         if (-not (Test-Path -Path $resolvedProject -PathType Leaf)) {
@@ -136,7 +136,7 @@ function Environment_Run {
             $exeArgs += "--Editor=true"
         }
 
-        Start-Process -FilePath ".\Environment.exe" -ArgumentList $exeArgs -NoNewWindow
+        Start-Process -FilePath ".\Kestrel.exe" -ArgumentList $exeArgs -NoNewWindow
     }
     finally {
         Set-Location $currentLocation
@@ -174,8 +174,8 @@ foreach ($arg in $args) {
             Write-Host "  --Build: Build the project"
             Write-Host "  --Tracy: Build with the Tracy profiler (v0.12.2) enabled"
             Write-Host "  --Mode=Debug|Release: Build type (default Debug); Release is optimized (-O2) with symbols"
-            Write-Host "  --Target=<name>: Build only this target: EnvironmentCore, EnvironmentServices, EnvironmentEditor or Environment (default: everything)"
-            Write-Host "  --Test: Run the unit tests (Binary\EnvironmentTests.exe); exits non-zero on failure"
+            Write-Host "  --Target=<name>: Build only this target: KestrelCore, KestrelServices, KestrelEditor or Kestrel (default: everything)"
+            Write-Host "  --Test: Run the unit tests (Binary\KestrelTests.exe); exits non-zero on failure"
             Write-Host "  --Run: Run the executable"
             Write-Host "  --Project=<path>: Project directory to load, e.g. Projects\DemoGame (required for --Run)"
             Write-Host "  --Editor: Start in editor mode"
@@ -193,23 +193,23 @@ foreach ($arg in $args) {
 
 # Execute operations in the correct order
 if ($shouldSetup) {
-    Environment_Setup
+    Kestrel_Setup
 }
 
 if ($shouldClean) {
-    Environment_Clean
+    Kestrel_Clean
 }
 
 if ($shouldBuild) {
-    Environment_Build -Tracy $tracyArg -Mode $modeArg -Target $targetArg
+    Kestrel_Build -Tracy $tracyArg -Mode $modeArg -Target $targetArg
 }
 
 if ($shouldTest) {
-    Environment_Test
+    Kestrel_Test
 }
 
 if ($shouldRun) {
-    Environment_Run -ProjectPath $projectArg -EditorMode $editorArg
+    Kestrel_Run -ProjectPath $projectArg -EditorMode $editorArg
 }
 
 # If no arguments provided, show help

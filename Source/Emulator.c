@@ -76,6 +76,10 @@
 #include <sys/select.h>
 #include <unistd.h>
 #define HavePosixIo 1
+#elif defined(_WIN32)
+#include <conio.h>
+#include <io.h>
+#define HaveWindowsIo 1
 #endif
 
 /* ------------------------------------------------------------------ */
@@ -204,10 +208,12 @@ static uint8_t memory[MemorySize];
 static Cpu cpu;
 
 /* ------------------------------------------------------------------ */
-/* UART input (non-blocking on POSIX, "never ready" elsewhere)         */
+/* UART input: non-blocking on POSIX and a Windows console; piped     */
+/* input on Windows is read as the program asks for it.                */
 
 static int receiveHaveByte, receiveEndOfFile;
 static uint8_t receiveByte;
+static int stopAtEndOfInput, inputExhausted;  /* --run: input ran out while the program waited */
 
 static int ReceivePoll(void)
 {
@@ -227,7 +233,23 @@ static int ReceivePoll(void)
             if (bytesRead == 0) receiveEndOfFile = 1;
         }
     }
+#elif defined(HaveWindowsIo)
+    if (_isatty(_fileno(stdin))) {
+        if (_kbhit()) {
+            int character = _getch();
+            if (character == '\r') character = '\n';
+            /* a console doesn't echo for _getch, so echo like a terminal would */
+            if (character == '\n' || (character >= ' ' && character < 127)) { putchar(character); fflush(stdout); }
+            if (character == 26) { receiveEndOfFile = 1; return 0; }  /* Ctrl+Z */
+            receiveByte = (uint8_t)character; receiveHaveByte = 1; return 1;
+        }
+    } else {
+        int character = getchar();  /* a pipe or file: blocks only until the next byte or EOF */
+        if (character != EOF) { receiveByte = (uint8_t)character; receiveHaveByte = 1; return 1; }
+        receiveEndOfFile = 1;
+    }
 #endif
+    if (receiveEndOfFile && stopAtEndOfInput) inputExhausted = 1;
     return 0;
 }
 
@@ -765,11 +787,15 @@ static void Usage(const char *programName)
 {
     fprintf(stderr,
             "usage: %s [-t] [-x] [-n steps] [program.bin]\n"
+            "       %s [-t] [-x] [-n steps] --run program.c|.s|.bin\n"
             "  -t        trace each instruction to stderr\n"
             "  -x        dump registers at exit\n"
             "  -n steps  stop after this many steps (default %d, 0 = unlimited)\n"
-            "  no file   run the built-in demo\n",
-            programName, DefaultStepLimit);
+            "  no file   run the built-in demo\n"
+            "  --run     build a .c or .s with the Compiler and Assembler next to this\n"
+            "            executable, run it with no step limit (unless -n), and stop once\n"
+            "            piped input has run out and the program waits for more\n",
+            programName, programName, DefaultStepLimit);
 }
 
 static const char *StepResultName(enum StepResult result)
@@ -779,6 +805,57 @@ static const char *StepResultName(enum StepResult result)
     case StepIllegal: return "illegal instruction";
     default:          return "step limit";
     }
+}
+
+/* Runs a command line, sending its output to stderr so stdout is only the program's. */
+static int RunTool(const char *commandLine)
+{
+    char quoted[4096];
+#ifdef _WIN32
+    snprintf(quoted, sizeof quoted, "\"%s 1>&2\"", commandLine);  /* cmd.exe strips one outer pair */
+#else
+    snprintf(quoted, sizeof quoted, "%s 1>&2", commandLine);
+#endif
+    return system(quoted);
+}
+
+/* Builds a .c or .s into a .bin beside the temp folder; returns the .bin path (static) or NULL. */
+static const char *BuildProgram(const char *fileName, const char *emulatorPath)
+{
+    static char binary[1024];
+    char toolDirectory[1024], assembly[1024], command[4096], temporary[1000];
+    const char *extension = strrchr(fileName, '.'), *slash, *temp;
+    size_t length;
+    if (!extension || !strcmp(extension, ".bin")) return fileName;
+    if (strcmp(extension, ".c") && strcmp(extension, ".s")) {
+        fprintf(stderr, "%s: expected a .c, .s or .bin file\n", fileName);
+        return NULL;
+    }
+
+    slash = strrchr(emulatorPath, '/');
+    if (strrchr(emulatorPath, '\\') > slash) slash = strrchr(emulatorPath, '\\');
+    length = slash ? (size_t)(slash - emulatorPath + 1) : 0;
+    snprintf(toolDirectory, sizeof toolDirectory, "%.*s", (int)length, emulatorPath);
+
+    temp = getenv("TEMP");
+    if (!temp) temp = getenv("TMPDIR");
+    if (!temp) temp = "/tmp";
+    slash = strrchr(fileName, '/');
+    if (strrchr(fileName, '\\') > slash) slash = strrchr(fileName, '\\');
+    snprintf(temporary, sizeof temporary, "%s/isa16-emulator-%.*s", temp,
+             (int)(extension - (slash ? slash + 1 : fileName)), slash ? slash + 1 : fileName);
+    snprintf(binary, sizeof binary, "%s.bin", temporary);
+
+    if (!strcmp(extension, ".c")) {
+        snprintf(assembly, sizeof assembly, "%s.s", temporary);
+        snprintf(command, sizeof command, "\"%sCompiler\" -o \"%s\" \"%s\"", toolDirectory, assembly, fileName);
+        if (RunTool(command) != 0) { fprintf(stderr, "compiling %s failed\n", fileName); return NULL; }
+    } else {
+        snprintf(assembly, sizeof assembly, "%s", fileName);
+    }
+    snprintf(command, sizeof command, "\"%sAssembler\" -o \"%s\" \"%s\"", toolDirectory, binary, assembly);
+    if (RunTool(command) != 0) { fprintf(stderr, "assembling %s failed\n", fileName); return NULL; }
+    return binary;
 }
 
 static int LoadProgram(const char *fileName)
@@ -809,17 +886,25 @@ int main(int argc, char **argv)
     int trace = 0, dump = 0, argumentIndex;
     enum StepResult result;
     unsigned long long stepLimit = DefaultStepLimit;
+    int run = 0, stepLimitGiven = 0;
 
     for (argumentIndex = 1; argumentIndex < argc; argumentIndex++) {
         const char *argument = argv[argumentIndex];
         if (!strcmp(argument, "-t")) trace = 1;
         else if (!strcmp(argument, "-x")) dump = 1;
         else if (!strcmp(argument, "-n") && argumentIndex + 1 < argc)
-            stepLimit = strtoull(argv[++argumentIndex], NULL, 0);
+            stepLimit = strtoull(argv[++argumentIndex], NULL, 0), stepLimitGiven = 1;
+        else if (!strcmp(argument, "--run") && argumentIndex + 1 < argc)
+            run = 1, fileName = argv[++argumentIndex];
         else if (argument[0] == '-') { Usage(argv[0]); return 2; }
         else fileName = argument;
     }
 
+    if (run) {
+        stopAtEndOfInput = 1;
+        if (!stepLimitGiven) stepLimit = 0;
+        if (!(fileName = BuildProgram(fileName, argv[0]))) return 2;
+    }
     if (fileName) {
         if (!LoadProgram(fileName)) return 1;
     } else {
@@ -830,10 +915,13 @@ int main(int argc, char **argv)
 
     while ((result = Step(trace)) == StepRunning) {
         if (stepLimit && cpu.steps >= stepLimit) { result = StepLimitReached; break; }
+        if (inputExhausted) break;
     }
+    fflush(stdout);
 
     fprintf(stderr, "[%s after %llu steps, pc=0x%04X]\n",
-            StepResultName(result), cpu.steps, cpu.programCounter);
+            inputExhausted && result == StepRunning ? "end of input" : StepResultName(result),
+            cpu.steps, cpu.programCounter);
 
     if (dump) DumpRegisters();
 

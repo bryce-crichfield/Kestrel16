@@ -80,10 +80,14 @@ def make_alu():
         lines.append('  - {id: %d, %s, at: [%d, %d]}' % (node_id[0], text, x, y))
         return node_id[0]
 
-    a = [node('kind: Input, label: A%d' % i, 40, 40 + 100 * i) for i in range(16)]
-    b = [node('kind: Input, label: B%d' % i, 40, 1700 + 100 * i) for i in range(16)]
-    op = [node('kind: Input, label: OP%d' % i, 40, 3360 + 100 * i) for i in range(4)]
-    cin = node('kind: Input, label: Cin', 40, 3780)
+    def bus(kind, label, width, x, y):
+        bus_node = node('kind: %s, label: %s, width: %d' % (kind, label, width), x, y)
+        return ['%d.%s%d' % (bus_node, label, i) for i in range(width)]
+
+    a = bus('Input', 'A', 16, 40, 300)
+    b = bus('Input', 'B', 16, 40, 900)
+    op = bus('Input', 'OP', 4, 40, 1500)
+    cin = node('kind: Input, label: Cin', 40, 2100)
     low, high = node('kind: Low', 380, 40), node('kind: High', 380, 140)
 
     address_names = ['A0', 'A1', 'A2', 'A3', 'B0', 'B1', 'B2', 'B3', 'OP0', 'OP1', 'OP2', 'OP3', 'Cin', 'SIN', 'P0', 'P1']
@@ -96,18 +100,18 @@ def make_alu():
                   '    address: 16', '    data: 8', '    inputs: [%s]' % ', '.join(address_names),
                   '    outputs: [%s]' % ', '.join(data_names), '    image: ALU Slice.bin']
     zero_low, zero_high, zero = (node('kind: And', 900, y) for y in (900, 2700, 1800))
-    outputs = [node('kind: Output, label: Y%d' % i, 1200, 40 + 100 * i) for i in range(16)]
+    outputs = bus('Output', 'Y', 16, 1200, 300)
     flag = {name: node('kind: Output, label: %s' % name, 1200, 1700 + 100 * i)
             for i, name in enumerate(['Z', 'N', 'C', 'V'])}
 
     for k, rom in enumerate(slices):
-        for i in range(4):
-            wires.append('%d -> %d.A%d' % (a[4 * k + i], rom, i))
-            wires.append('%d -> %d.B%d' % (b[4 * k + i], rom, i))
-            wires.append('%d.Y%d -> %d' % (rom, i, outputs[4 * k + i]))
-            wires.append('%d -> %d.OP%d' % (op[i], rom, i))
+        # Each slice takes a nibble of A, B and Y, and all of OP: bus wires.
+        wires.append('%s..A%d -> %d.A0..A3' % (a[4 * k], 4 * k + 3, rom))
+        wires.append('%s..B%d -> %d.B0..B3' % (b[4 * k], 4 * k + 3, rom))
+        wires.append('%d.Y0..Y3 -> %s..Y%d' % (rom, outputs[4 * k], 4 * k + 3))
+        wires.append('%s -> %d.OP0..OP3' % (op[0].split('.')[0], rom))
         wires.append('%d -> %d.Cin' % (cin, rom) if k == 0 else '%d.Cout -> %d.Cin' % (slices[k - 1], rom))
-        wires.append('%d -> %d.SIN' % (a[4 * k + 4] if k < 3 else low, rom))
+        wires.append('%s -> %d.SIN' % (a[4 * k + 4] if k < 3 else low, rom))
         wires.append('%d -> %d.P0' % (high if k & 1 else low, rom))
         wires.append('%d -> %d.P1' % (high if k & 2 else low, rom))
         wires.append('%d -> %d./CE' % (low, rom))
