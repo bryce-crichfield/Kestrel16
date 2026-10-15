@@ -45,7 +45,7 @@ wires:
   - 2./OE -> 9./OE
   - 2./WEL -> 9./WE
   - 5./TIMER -> 10./CE
-  - 2./WEL -> 10./WE
+  - 2./WRL -> 10./WE
   - 2./OE -> 10./OE
   - 2.TICK -> 10.TICK
   - 2.ACK -> 10.ACK

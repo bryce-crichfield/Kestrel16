@@ -1,5 +1,5 @@
 name: ISA16 CPU
-description: "The ISA-16 processor. Memory interface: A0-15 address, DO0-15 data out (driven only while storing), DI0-15 data in, /OE read strobe, /WEL and /WEH write strobes for the even (low) and odd (high) byte. TIRQ is the timer's interrupt request, ACK says it was taken, TICK marks each instruction. HALTED: HALT ran (waiting for an interrupt); ILLEGAL: stopped on an illegal instruction."
+description: "The ISA-16 processor. Memory interface: A0-15 address, DO0-15 data out (driven only while storing), DI0-15 data in, /OE read strobe, /WEL and /WEH write strobes for the even (low) and odd (high) byte, low only while CLK is low; /WRL is /WEL for the whole write cycle, for parts that latch on the clock (the Timer). TIRQ is the timer's interrupt request, ACK says it was taken, TICK marks each instruction. HALTED: HALT ran (waiting for an interrupt); ILLEGAL: stopped on an illegal instruction."
 nodes:
   - {id: 1, kind: Input, label: "CLK", at: [40, 40]}
   - {id: 2, kind: Input, label: "DI", width: 16, at: [40, 140]}
@@ -9,32 +9,40 @@ nodes:
   - {id: 6, kind: Output, label: "/OE", at: [4200, 40]}
   - {id: 7, kind: Output, label: "/WEL", at: [4200, 140]}
   - {id: 8, kind: Output, label: "/WEH", at: [4200, 240]}
-  - {id: 9, kind: Output, label: "ACK", at: [4200, 340]}
-  - {id: 10, kind: Output, label: "TICK", at: [4200, 440]}
-  - {id: 11, kind: Output, label: "HALTED", at: [4200, 540]}
-  - {id: 12, kind: Output, label: "ILLEGAL", at: [4200, 640]}
-  - {id: 13, kind: Low, at: [300, 40]}
-  - {id: 14, kind: High, at: [300, 160]}
-  - {id: 15, component: Control Unit, at: [560, 40]}
-  - {id: 16, component: Register 16, at: [820, 40]}
-  - {id: 17, component: Register 16, at: [820, 902]}
-  - {id: 18, component: Register 16, at: [820, 1764]}
-  - {id: 19, component: Register 16, at: [820, 2626]}
-  - {id: 20, component: Register 16, at: [820, 3488]}
-  - {id: 21, component: ALU 16, at: [1600, 40]}
-  - {id: 22, component: Register File, at: [1340, 40]}
-  - {id: 23, component: Mux 2x4, at: [1080, 40]}
-  - {id: 24, component: Mux 2x4, at: [1080, 308]}
-  - {id: 25, component: Mux 2x4, at: [1080, 576]}
-  - {id: 26, component: Bus Driver 16, at: [1340, 990]}
-  - {id: 27, component: Bus Driver 16, at: [1340, 1434]}
-  - {id: 28, component: Immediate Unit, at: [1340, 1878]}
-  - {id: 29, component: Status, at: [1860, 40]}
-  - {id: 30, kind: And, at: [1860, 440]}
-  - {id: 31, kind: Or, at: [1860, 560]}
-  - id: 32
+  - {id: 9, kind: Output, label: "/WRL", at: [4200, 340]}
+  - {id: 10, kind: Output, label: "ACK", at: [4200, 440]}
+  - {id: 11, kind: Output, label: "TICK", at: [4200, 540]}
+  - {id: 12, kind: Output, label: "HALTED", at: [4200, 640]}
+  - {id: 13, kind: Output, label: "ILLEGAL", at: [4200, 740]}
+  - {id: 14, kind: Low, at: [300, 40]}
+  - {id: 15, kind: High, at: [300, 160]}
+  - {id: 16, component: Control Unit, at: [560, 40]}
+  - {id: 17, component: Register 16, at: [820, 40]}
+  - {id: 18, component: Register 16, at: [820, 902]}
+  - {id: 19, component: Register 16, at: [820, 1764]}
+  - {id: 20, component: Register 16, at: [820, 2626]}
+  - {id: 21, component: Register 16, at: [820, 3488]}
+  - {id: 22, component: ALU 16, at: [1600, 40]}
+  - {id: 23, component: Register File, at: [1340, 40]}
+  - {id: 24, component: Mux 2x4, at: [1080, 40]}
+  - {id: 25, component: Mux 2x4, at: [1080, 308]}
+  - {id: 26, component: Mux 2x4, at: [1080, 576]}
+  - {id: 27, component: Bus Driver 16, at: [1340, 990]}
+  - {id: 28, component: Bus Driver 16, at: [1340, 1434]}
+  - {id: 29, component: Immediate Unit, at: [1340, 1878]}
+  - {id: 30, component: Status, at: [1860, 40]}
+  - {id: 31, kind: And, at: [1860, 440]}
+  - {id: 32, kind: Or, at: [1860, 560]}
+  - {id: 33, component: Shifter 16, at: [1600, 990]}
+  - {id: 34, kind: Not, at: [1340, 2454]}
+  - {id: 35, kind: And, at: [1340, 2574]}
+  - {id: 36, kind: Not, at: [1860, 680]}
+  - {id: 37, kind: And, at: [1860, 800]}
+  - {id: 38, kind: And, at: [1860, 920]}
+  - {id: 39, kind: Or, at: [2120, 40]}
+  - id: 40
     kind: ROM
-    at: [2120, 40]
+    at: [2120, 160]
     address: 8
     data: 1
     inputs: ["C0", "C1", "C2", "C3", "Z", "N", "C", "V"]
@@ -56,196 +64,219 @@ nodes:
       - "00D0: 1 1 0 0 1 1 0 0 1 0 1 1 0 0 0 0"
       - "00E0: 1 0 1 0 1 0 1 1 0 1 0 1 0 0 0 0"
       - "00F0: 1 1 0 0 1 0 1 0 1 1 0 1 0 0 0 0"
-  - {id: 33, component: Counter 4, at: [1860, 680]}
-  - {id: 34, kind: And, at: [2120, 372]}
-  - {id: 35, kind: Not, at: [2120, 492]}
-  - {id: 36, kind: Or, at: [2380, 40]}
-  - {id: 37, kind: Or, at: [2380, 160]}
-  - {id: 38, kind: Not, at: [2120, 612]}
-  - {id: 39, kind: And, at: [2380, 280]}
-  - {id: 40, kind: Not, at: [2120, 732]}
-  - {id: 41, component: Bus Driver 16, at: [2640, 40]}
-  - {id: 42, component: Bus Driver 8, at: [2900, 40]}
-  - {id: 43, kind: Nand, at: [2640, 484]}
-  - {id: 44, component: Bus Driver 8, at: [2900, 308]}
-  - {id: 45, kind: Nand, at: [2640, 604]}
-  - {id: 46, component: Bus Driver 8, at: [2900, 576]}
-  - {id: 47, kind: Nand, at: [2640, 724]}
-  - {id: 48, component: Bus Driver 8, at: [2900, 844]}
-  - {id: 49, kind: Nand, at: [2640, 844]}
-  - {id: 50, component: Bus Driver 8, at: [3420, 40]}
-  - {id: 51, kind: Nand, at: [3160, 40]}
-  - {id: 52, component: Bus Driver 8, at: [3420, 308]}
-  - {id: 53, kind: Nand, at: [3160, 160]}
-  - {id: 54, component: Bus Driver 8, at: [3420, 576]}
-  - {id: 55, kind: Nand, at: [3160, 280]}
-  - {id: 56, kind: Not, at: [3940, 140]}
-  - {id: 57, kind: Nand, at: [3940, 260]}
-  - {id: 58, kind: Nand, at: [3940, 380]}
+  - {id: 41, kind: And, at: [2120, 492]}
+  - {id: 42, kind: Not, at: [2120, 612]}
+  - {id: 43, kind: Or, at: [2380, 40]}
+  - {id: 44, kind: Or, at: [2380, 160]}
+  - {id: 45, kind: Not, at: [2120, 732]}
+  - {id: 46, kind: And, at: [2380, 280]}
+  - {id: 47, kind: Not, at: [2120, 852]}
+  - {id: 48, component: Bus Driver 16, at: [2640, 40]}
+  - {id: 49, component: Bus Driver 8, at: [2900, 40]}
+  - {id: 50, kind: Nand, at: [2640, 484]}
+  - {id: 51, component: Bus Driver 8, at: [2900, 308]}
+  - {id: 52, kind: Nand, at: [2640, 604]}
+  - {id: 53, component: Bus Driver 8, at: [2900, 576]}
+  - {id: 54, kind: Nand, at: [2640, 724]}
+  - {id: 55, component: Bus Driver 8, at: [2900, 844]}
+  - {id: 56, kind: Nand, at: [2640, 844]}
+  - {id: 57, component: Bus Driver 8, at: [3420, 40]}
+  - {id: 58, kind: Nand, at: [3160, 40]}
+  - {id: 59, component: Bus Driver 8, at: [3420, 308]}
+  - {id: 60, kind: Nand, at: [3160, 160]}
+  - {id: 61, component: Bus Driver 8, at: [3420, 576]}
+  - {id: 62, kind: Nand, at: [3160, 280]}
+  - {id: 63, kind: Not, at: [3940, 140]}
+  - {id: 64, kind: Not, at: [3680, 140]}
+  - {id: 65, kind: Nand, at: [3940, 260]}
+  - {id: 66, kind: And, at: [3680, 260]}
+  - {id: 67, kind: Nand, at: [3940, 380]}
+  - {id: 68, kind: And, at: [3680, 380]}
+  - {id: 69, kind: Nand, at: [3940, 500]}
 wires:
-  - 1 -> 16.CLK
   - 1 -> 17.CLK
   - 1 -> 18.CLK
   - 1 -> 19.CLK
   - 1 -> 20.CLK
-  - 15./LDIR -> 16./LOAD
-  - 13 -> 16./OEA
-  - 14 -> 16./OEB
-  - 15./LDPC -> 17./LOAD
-  - 15./LDMAR -> 18./LOAD
-  - 15./LDT -> 19./LOAD
-  - 15./LDEPC -> 20./LOAD
-  - 15./XPC -> 17./OEA
-  - 15./APC -> 17./OEB
-  - 15./AMAR -> 18./OEA
-  - 14 -> 18./OEB
-  - 15./XT -> 19./OEA
-  - 14 -> 19./OEB
-  - 15./XEPC -> 20./OEA
-  - 14 -> 20./OEB
-  - 1 -> 22.CLK
-  - 15.RFWE -> 22.WE
-  - 13 -> 23.A3
-  - 13 -> 23.B3
-  - 15.RASYS -> 23.S
-  - 13 -> 24.A3
-  - 13 -> 24.B3
-  - 15.RBDEST -> 24.S
-  - 14 -> 25.B0
-  - 14 -> 25.B1
-  - 14 -> 25.B2
-  - 13 -> 25.A3
-  - 13 -> 25.B3
-  - 15.WSEL7 -> 25.S
-  - 15./XRF -> 26./OE
-  - 15./YRF -> 27./OE
-  - 15./YIMM -> 28./OE
-  - 15.CINC -> 30.A
-  - 29.C -> 30.B
-  - 15.CIN1 -> 31.A
-  - 30.Y -> 31.B
-  - 31.Y -> 21.Cin
-  - 21.Z -> 29.ZIN
-  - 21.N -> 29.NIN
-  - 21.C -> 29.CIN
-  - 21.V -> 29.VIN
-  - 15.WZN -> 29.WZN
-  - 15.WC -> 29.WC
-  - 15.WV -> 29.WV
-  - 15.RESTORE -> 29.RESTORE
-  - 15.SAVE -> 29.SAVE
-  - 15.IESET -> 29.IESET
-  - 15.IECLR -> 29.IECLR
-  - 1 -> 29.CLK
-  - 29.Z -> 32.Z
-  - 29.N -> 32.N
-  - 29.C -> 32.C
-  - 29.V -> 32.V
-  - 13 -> 32./CE
-  - 13 -> 32./OE
-  - 15.CNTLOAD -> 33.LOAD
-  - 15.CNTDEC -> 33.DEC
-  - 1 -> 33.CLK
-  - 32.TAKE -> 15.TAKE
-  - 3 -> 34.A
-  - 29.IE -> 34.B
-  - 34.Y -> 15.IRQ
-  - 33.ZERO -> 15.CNTZERO
-  - 1 -> 15.CLK
-  - 18.QA0 -> 35.A
-  - 15.WORD -> 36.A
-  - 35.Y -> 36.B
-  - 15.WORD -> 37.A
-  - 18.QA0 -> 37.B
-  - 15.WORD -> 38.A
-  - 38.Y -> 39.A
-  - 18.QA0 -> 39.B
-  - 15.WORD -> 40.A
-  - 15./WALU -> 41./OE
-  - 15.MLOAD -> 43.A
-  - 36.Y -> 43.B
-  - 43.Y -> 42./OE
-  - 15.MLOAD -> 45.A
-  - 39.Y -> 45.B
-  - 45.Y -> 44./OE
-  - 15.MLOAD -> 47.A
-  - 15.WORD -> 47.B
-  - 47.Y -> 46./OE
-  - 13 -> 48.A0
-  - 13 -> 48.A1
-  - 13 -> 48.A2
-  - 13 -> 48.A3
-  - 13 -> 48.A4
-  - 13 -> 48.A5
-  - 13 -> 48.A6
-  - 13 -> 48.A7
-  - 15.MLOAD -> 49.A
-  - 40.Y -> 49.B
-  - 49.Y -> 48./OE
-  - 15.STORE -> 51.A
-  - 36.Y -> 51.B
-  - 51.Y -> 50./OE
-  - 15.STORE -> 53.A
-  - 15.WORD -> 53.B
-  - 53.Y -> 52./OE
-  - 15.STORE -> 55.A
-  - 39.Y -> 55.B
-  - 55.Y -> 54./OE
-  - 15.MREAD -> 56.A
-  - 56.Y -> 6
-  - 15.WSTROBE -> 57.A
-  - 36.Y -> 57.B
-  - 57.Y -> 7
-  - 15.WSTROBE -> 58.A
-  - 37.Y -> 58.B
-  - 58.Y -> 8
-  - 15.ACK -> 9
-  - 15.TICK -> 10
-  - 15.HALTED -> 11
-  - 15.ILLEGAL -> 12
-  - 2 -> 16.D0..D15
-  - 21.Y0..Y15 -> 17.D0..D15
-  - 21.Y0..Y15 -> 18.D0..D15
-  - 21.Y0..Y15 -> 19.D0..D15
-  - 21.Y0..Y15 -> 20.D0..D15
-  - 17.QA0..QA15 -> 21.A0..A15
-  - 19.QA0..QA15 -> 21.A0..A15
-  - 20.QA0..QA15 -> 21.A0..A15
-  - 17.QB0..QB15 -> 4
-  - 18.QA0..QA15 -> 4
-  - 16.QA6..QA8 -> 23.A0..A2
-  - 16.QA5..QA7 -> 23.B0..B2
-  - 23.Y0..Y2 -> 22.RA0..RA2
-  - 16.QA3..QA5 -> 24.A0..A2
-  - 16.QA9..QA11 -> 24.B0..B2
-  - 24.Y0..Y2 -> 22.RB0..RB2
-  - 16.QA9..QA11 -> 25.A0..A2
-  - 25.Y0..Y2 -> 22.W0..W2
-  - 22.QA0..QA15 -> 26.A0..A15
-  - 26.Y0..Y15 -> 21.A0..A15
-  - 22.QB0..QB15 -> 27.A0..A15
-  - 27.Y0..Y15 -> 21.B0..B15
-  - 16.QA0..QA11 -> 28.IR0..IR11
-  - 22.QB0..QB7 -> 28.OLD0..OLD7
-  - 15.IMM0..IMM2 -> 28.SEL0..SEL2
-  - 28.Y0..Y15 -> 21.B0..B15
-  - 15.OP0..OP3 -> 21.OP0..OP3
-  - 16.QA8..QA11 -> 32.C0..C3
-  - 27.Y0..Y3 -> 33.D0..D3
-  - 16.QA0..QA2 -> 15.IR0..IR2
-  - 16.QA8..QA15 -> 15.IR8..IR15
-  - 21.Y0..Y15 -> 41.A0..A15
-  - 41.Y0..Y15 -> 22.D0..D15
-  - 2.DI0..DI7 -> 42.A0..A7
-  - 42.Y0..Y7 -> 22.D0..D7
-  - 2.DI8..DI15 -> 44.A0..A7
-  - 44.Y0..Y7 -> 22.D0..D7
-  - 2.DI8..DI15 -> 46.A0..A7
-  - 46.Y0..Y7 -> 22.D8..D15
-  - 48.Y0..Y7 -> 22.D8..D15
-  - 22.QB0..QB7 -> 50.A0..A7
-  - 50.Y0..Y7 -> 5.DO0..DO7
-  - 22.QB8..QB15 -> 52.A0..A7
-  - 52.Y0..Y7 -> 5.DO8..DO15
-  - 22.QB0..QB7 -> 54.A0..A7
-  - 54.Y0..Y7 -> 5.DO8..DO15
+  - 1 -> 21.CLK
+  - 16./LDIR -> 17./LOAD
+  - 14 -> 17./OEA
+  - 15 -> 17./OEB
+  - 16./LDPC -> 18./LOAD
+  - 16./LDMAR -> 19./LOAD
+  - 16./LDT -> 20./LOAD
+  - 16./LDEPC -> 21./LOAD
+  - 16./XPC -> 18./OEA
+  - 16./APC -> 18./OEB
+  - 16./AMAR -> 19./OEA
+  - 15 -> 19./OEB
+  - 16./XT -> 20./OEA
+  - 15 -> 20./OEB
+  - 16./XEPC -> 21./OEA
+  - 15 -> 21./OEB
+  - 1 -> 23.CLK
+  - 16.RFWE -> 23.WE
+  - 14 -> 24.A3
+  - 14 -> 24.B3
+  - 16.RASYS -> 24.S
+  - 14 -> 25.A3
+  - 14 -> 25.B3
+  - 16.RBDEST -> 25.S
+  - 15 -> 26.B0
+  - 15 -> 26.B1
+  - 15 -> 26.B2
+  - 14 -> 26.A3
+  - 14 -> 26.B3
+  - 16.WSEL7 -> 26.S
+  - 16./XRF -> 27./OE
+  - 16./YRF -> 28./OE
+  - 16./YIMM -> 29./OE
+  - 16.CINC -> 31.A
+  - 30.C -> 31.B
+  - 16.CIN1 -> 32.A
+  - 31.Y -> 32.B
+  - 32.Y -> 22.Cin
+  - 17.QA1 -> 34.A
+  - 34.Y -> 33.LEFT
+  - 17.QA1 -> 35.A
+  - 17.QA0 -> 35.B
+  - 35.Y -> 33.ARITH
+  - 30.C -> 33.CIN
+  - 16./XSH -> 33./OE
+  - 22.Z -> 30.ZIN
+  - 22.N -> 30.NIN
+  - 22.V -> 30.VIN
+  - 16.CSH -> 36.A
+  - 22.C -> 37.A
+  - 36.Y -> 37.B
+  - 33.C -> 38.A
+  - 16.CSH -> 38.B
+  - 37.Y -> 39.A
+  - 38.Y -> 39.B
+  - 39.Y -> 30.CIN
+  - 16.WZN -> 30.WZN
+  - 16.WC -> 30.WC
+  - 16.WV -> 30.WV
+  - 16.RESTORE -> 30.RESTORE
+  - 16.SAVE -> 30.SAVE
+  - 16.IESET -> 30.IESET
+  - 16.IECLR -> 30.IECLR
+  - 1 -> 30.CLK
+  - 30.Z -> 40.Z
+  - 30.N -> 40.N
+  - 30.C -> 40.C
+  - 30.V -> 40.V
+  - 14 -> 40./CE
+  - 14 -> 40./OE
+  - 40.TAKE -> 16.TAKE
+  - 3 -> 41.A
+  - 30.IE -> 41.B
+  - 41.Y -> 16.IRQ
+  - 1 -> 16.CLK
+  - 19.QA0 -> 42.A
+  - 16.WORD -> 43.A
+  - 42.Y -> 43.B
+  - 16.WORD -> 44.A
+  - 19.QA0 -> 44.B
+  - 16.WORD -> 45.A
+  - 45.Y -> 46.A
+  - 19.QA0 -> 46.B
+  - 16.WORD -> 47.A
+  - 16./WALU -> 48./OE
+  - 16.MLOAD -> 50.A
+  - 43.Y -> 50.B
+  - 50.Y -> 49./OE
+  - 16.MLOAD -> 52.A
+  - 46.Y -> 52.B
+  - 52.Y -> 51./OE
+  - 16.MLOAD -> 54.A
+  - 16.WORD -> 54.B
+  - 54.Y -> 53./OE
+  - 14 -> 55.A0
+  - 14 -> 55.A1
+  - 14 -> 55.A2
+  - 14 -> 55.A3
+  - 14 -> 55.A4
+  - 14 -> 55.A5
+  - 14 -> 55.A6
+  - 14 -> 55.A7
+  - 16.MLOAD -> 56.A
+  - 47.Y -> 56.B
+  - 56.Y -> 55./OE
+  - 16.STORE -> 58.A
+  - 43.Y -> 58.B
+  - 58.Y -> 57./OE
+  - 16.STORE -> 60.A
+  - 16.WORD -> 60.B
+  - 60.Y -> 59./OE
+  - 16.STORE -> 62.A
+  - 46.Y -> 62.B
+  - 62.Y -> 61./OE
+  - 16.MREAD -> 63.A
+  - 63.Y -> 6
+  - 1 -> 64.A
+  - 16.WSTROBE -> 65.A
+  - 43.Y -> 65.B
+  - 65.Y -> 9
+  - 16.WSTROBE -> 66.A
+  - 64.Y -> 66.B
+  - 66.Y -> 67.A
+  - 43.Y -> 67.B
+  - 67.Y -> 7
+  - 16.WSTROBE -> 68.A
+  - 64.Y -> 68.B
+  - 68.Y -> 69.A
+  - 44.Y -> 69.B
+  - 69.Y -> 8
+  - 16.ACK -> 10
+  - 16.TICK -> 11
+  - 16.HALTED -> 12
+  - 16.ILLEGAL -> 13
+  - 2 -> 17.D0..D15
+  - 22.Y0..Y15 -> 18.D0..D15
+  - 22.Y0..Y15 -> 19.D0..D15
+  - 22.Y0..Y15 -> 20.D0..D15
+  - 22.Y0..Y15 -> 21.D0..D15
+  - 18.QA0..QA15 -> 22.A0..A15
+  - 20.QA0..QA15 -> 22.A0..A15
+  - 21.QA0..QA15 -> 22.A0..A15
+  - 18.QB0..QB15 -> 4
+  - 19.QA0..QA15 -> 4
+  - 17.QA6..QA8 -> 24.A0..A2
+  - 17.QA5..QA7 -> 24.B0..B2
+  - 24.Y0..Y2 -> 23.RA0..RA2
+  - 17.QA3..QA5 -> 25.A0..A2
+  - 17.QA9..QA11 -> 25.B0..B2
+  - 25.Y0..Y2 -> 23.RB0..RB2
+  - 17.QA9..QA11 -> 26.A0..A2
+  - 26.Y0..Y2 -> 23.W0..W2
+  - 23.QA0..QA15 -> 27.A0..A15
+  - 27.Y0..Y15 -> 22.A0..A15
+  - 23.QB0..QB15 -> 28.A0..A15
+  - 28.Y0..Y15 -> 22.B0..B15
+  - 17.QA0..QA11 -> 29.IR0..IR11
+  - 23.QB0..QB7 -> 29.OLD0..OLD7
+  - 16.IMM0..IMM2 -> 29.SEL0..SEL2
+  - 29.Y0..Y15 -> 22.B0..B15
+  - 16.OP0..OP3 -> 22.OP0..OP3
+  - 23.QA0..QA15 -> 33.A0..A15
+  - 33.Y0..Y15 -> 22.A0..A15
+  - 23.QB0..QB3 -> 33.N0..N3
+  - 17.QA8..QA11 -> 40.C0..C3
+  - 17.QA0..QA2 -> 16.IR0..IR2
+  - 17.QA8..QA15 -> 16.IR8..IR15
+  - 22.Y0..Y15 -> 48.A0..A15
+  - 48.Y0..Y15 -> 23.D0..D15
+  - 2.DI0..DI7 -> 49.A0..A7
+  - 49.Y0..Y7 -> 23.D0..D7
+  - 2.DI8..DI15 -> 51.A0..A7
+  - 51.Y0..Y7 -> 23.D0..D7
+  - 2.DI8..DI15 -> 53.A0..A7
+  - 53.Y0..Y7 -> 23.D8..D15
+  - 55.Y0..Y7 -> 23.D8..D15
+  - 23.QB0..QB7 -> 57.A0..A7
+  - 57.Y0..Y7 -> 5.DO0..DO7
+  - 23.QB8..QB15 -> 59.A0..A7
+  - 59.Y0..Y7 -> 5.DO8..DO15
+  - 23.QB0..QB7 -> 61.A0..A7
+  - 61.Y0..Y7 -> 5.DO8..DO15

@@ -7,6 +7,7 @@ Parts (each its own component, most of them a familiar 74HC chip or two):
     Bus Driver 8 / 16   tri-state buffers with one /OE (74HC541)
     Mux 2x4             four 2-input multiplexers with one select (74HC157)
     Counter 4 / 16      loadable down-counters (74HC193)
+    Shifter 16          a barrel shifter: SHL, SHR or SAR by 0-15 in one pass, from Mux 2x4s
     Immediate Unit      the instruction's constants, one at a time onto the Y bus
     Status              the flags Z N C V, the interrupt enable, and their copies saved on an exception
     Control Unit        a 5-bit state register and two microcode ROMs (Control A.bin, Control B.bin)
@@ -15,8 +16,9 @@ Parts (each its own component, most of them a familiar 74HC chip or two):
     ISA16 Computer      the CPU, two 32K x 8 RAMs (even and odd bytes), the Terminal and the Timer
 
 The CPU is multi-cycle. Every instruction starts with FETCH (IR <- memory[PC] while the ALU makes
-PC + 2), then takes one to three more cycles; shifts loop one bit per cycle. Memory writes take
-three cycles so the address and data are steady before, during and after /WE.
+PC + 2), then takes one to three more cycles. Shifts go through the barrel shifter in one cycle.
+A store's write cycle drives the address and data while CLK is high and pulses /WE while it is low,
+so /WE ends at the rising edge, before the address can change.
 """
 import os
 from circuit import Builder, COMPONENTS
@@ -75,6 +77,51 @@ def make_counter(bits):
     upper_zero = b.gate1('Not', 7, upper)
     b.wire(b.gate2('And', 7, upper_zero, '%d./Q' % flip_flops[0]), zero_output)
     b.wire(b.gate2('And', 7, upper_zero, q[0]), one_output)
+    b.save()
+
+
+def make_shifter():
+    b = Builder('Shifter 16',
+                'A barrel shifter: Y = A shifted by N (0-15) while /OE is 0, left when LEFT is 1, otherwise right, '
+                'filling with A15 when ARITH is 1 (SAR). C is the last bit shifted out, or CIN when N is 0. A left '
+                'shift reverses A, shifts right and reverses back; the right shift is 17 bits wide, with a guard '
+                'bit below A0 that catches the bit shifted out. Four stages of Mux 2x4s (74HC157s), one per bit '
+                'of N.')
+    a = b.bus_input('A', 16)
+    amount = b.bus_input('N', 4)
+    left, arith, carry_in, enable = b.input('LEFT'), b.input('ARITH'), b.input('CIN'), b.input('/OE')
+    outputs = b.bus_output('Y', 16, 8)
+    carry_out = b.output('C', 8)
+    low = b.gate('Low', 1)
+
+    def muxes(column, a_bits, b_bits, select):
+        """select ? b_bits : a_bits, bit by bit, through Mux 2x4s."""
+        result = []
+        for start in range(0, len(a_bits), 4):
+            mux = b.part('Mux 2x4', column, 9)
+            for i in range(4):
+                index = start + i
+                b.wire(a_bits[index] if index < len(a_bits) else low, '%d.A%d' % (mux, i))
+                b.wire(b_bits[index] if index < len(b_bits) else low, '%d.B%d' % (mux, i))
+            b.wire(select, '%d.S' % mux)
+            result += ['%d.Y%d' % (mux, i) for i in range(4)]
+        return result[:len(a_bits)]
+
+    ordered = muxes(1, a, a[::-1], left)
+    fill = b.gate2('And', 1, arith, a[15])
+    bits = [low] + ordered  # bit 0 is the guard
+    for stage in range(4):
+        distance = 1 << stage
+        shifted = [bits[i + distance] if i + distance < 17 else fill for i in range(17)]
+        bits = muxes(2 + stage, bits, shifted, amount[stage])
+    result = muxes(6, bits[1:], bits[1:][::-1], left)
+
+    driver = b.part('Bus Driver 16', 7, 17)
+    for i in range(16):
+        b.wire(result[i], '%d.A%d' % (driver, i))
+        b.wire('%d.Y%d' % (driver, i), outputs[i])
+    b.wire(enable, '%d./OE' % driver)
+    b.wire(b.mux(7, carry_in, bits[0], b.or_tree(6, amount)), carry_out)
     b.save()
 
 
@@ -163,16 +210,15 @@ def make_status():
 
 # Control signals, in ROM data-bit order, with their idle values. Names starting with / are
 # active-low enables and loads.
-CONTROL_A = [('/XRF', 0), ('/XPC', 1), ('/XEPC', 1), ('/XT', 1), ('/YRF', 0), ('/YIMM', 1), ('/APC', 0),
+CONTROL_A = [('/XRF', 0), ('/XPC', 1), ('/XEPC', 1), ('/XT', 1), ('/XSH', 1), ('CSH', 0), ('/YRF', 0), ('/YIMM', 1), ('/APC', 0),
              ('/AMAR', 1), ('/WALU', 1), ('MLOAD', 0), ('/LDPC', 1), ('/LDMAR', 1), ('/LDEPC', 1), ('/LDT', 1),
              ('/LDIR', 1), ('RFWE', 0), ('WSEL7', 0), ('RASYS', 0), ('RBDEST', 0), ('OP0', 0), ('OP1', 0),
              ('OP2', 0), ('OP3', 0), ('CIN1', 0), ('CINC', 0), ('IMM0', 0), ('IMM1', 0), ('IMM2', 0)]
 CONTROL_B = [('WZN', 0), ('WC', 0), ('WV', 0), ('RESTORE', 0), ('SAVE', 0), ('IESET', 0), ('IECLR', 0),
-             ('ACK', 0), ('MREAD', 0), ('STORE', 0), ('WSTROBE', 0), ('WORD', 0), ('CNTLOAD', 0), ('CNTDEC', 0),
-             ('TICK', 0), ('HALTED', 0), ('ILLEGAL', 0), ('N0', 0), ('N1', 0), ('N2', 0), ('N3', 0), ('N4', 0)]
-CONTROL_ADDRESS = ['S0', 'S1', 'S2', 'S3', 'S4', 'OP0', 'OP1', 'OP2', 'OP3', 'F0', 'F1', 'F2', 'F3', 'TAKE', 'IRQ', 'CNTZERO']
+             ('ACK', 0), ('MREAD', 0), ('STORE', 0), ('WSTROBE', 0), ('WORD', 0), ('TICK', 0), ('HALTED', 0), ('ILLEGAL', 0), ('N0', 0), ('N1', 0), ('N2', 0), ('N3', 0), ('N4', 0)]
+CONTROL_ADDRESS = ['S0', 'S1', 'S2', 'S3', 'S4', 'OP0', 'OP1', 'OP2', 'OP3', 'F0', 'F1', 'F2', 'F3', 'TAKE', 'IRQ']
 
-STATES = ['RESET', 'FETCH', 'FETCH2', 'E1', 'E2', 'E3', 'E4', 'INT1', 'INT2', 'HALT', 'ILLEGAL', 'SHIFT', 'SHIFTEND']
+STATES = ['RESET', 'FETCH', 'FETCH2', 'E1', 'E2', 'E3', 'E4', 'INT1', 'INT2', 'HALT', 'ILLEGAL']
 S = {name: index for index, name in enumerate(STATES)}
 ALU = {'ADD': 0, 'SUB': 1, 'AND': 2, 'OR': 3, 'XOR': 4, 'SHL': 5, 'SHR': 6, 'SAR': 7, 'NOT': 8, 'NEG': 9,
        'PASSA': 10, 'PASSB': 11, 'SXB': 12}
@@ -191,7 +237,7 @@ class Step:
             self.signals[name] = 0 if name.startswith('/') else 1
         return self
 
-    def x(self, source):  # the ALU's A input: RF, PC, EPC or T
+    def x(self, source):  # the ALU's A input: RF, PC, EPC, T or SH (the shifter)
         self.signals['/XRF'] = 1
         return self.on('/X' + source)
 
@@ -231,21 +277,12 @@ def fetch(tick):
     return step.on('TICK') if tick else step
 
 
-def execute(state, opcode, function, take, cnt_zero):
-    """The cycle of an instruction after FETCH, in state E1..E4, SHIFT or SHIFTEND."""
+def execute(state, opcode, function, take):
+    """The cycle of an instruction after FETCH, in state E1..E4."""
     illegal = Step('ILLEGAL')
     alu_ops = ['ADD', 'SUB', 'AND', 'OR', 'XOR', 'SHL', 'SHR', 'SAR']
 
-    if opcode == 0 and 5 <= function <= 7:  # shifts: T <- a, count <- b & 15, then one bit per cycle
-        if state == 'E1':
-            return Step('SHIFT').x('RF').alu('PASSA').on('/LDT', 'CNTLOAD')
-        if state == 'SHIFT':
-            if cnt_zero:
-                return Step('SHIFTEND')
-            return Step('SHIFT').x('T').alu(alu_ops[function]).on('/LDT', 'WC', 'CNTDEC')
-        if state == 'SHIFTEND':
-            return Step('FETCH').x('T').alu('PASSA').write_register().on('WZN')
-    states = {5: 2, 6: 4, 7: 2, 8: 4, 11: 2}.get(opcode, 1)  # how many E states the instruction uses
+    states = {5: 2, 6: 2, 7: 2, 8: 2, 11: 2}.get(opcode, 1)  # how many E states the instruction uses
     if opcode == 12:
         states = {1: 3, 6: 2}.get(function, 1)
     if state not in ('E1', 'E2', 'E3', 'E4')[:states]:
@@ -254,6 +291,8 @@ def execute(state, opcode, function, take, cnt_zero):
     if opcode == 0:
         if function > 7:  # F3 is always 0 here; these ROM words are never used
             return illegal
+        if function >= 5:  # shifts: the shifter's result through the ALU, its carry to C
+            return Step('FETCH').x('SH').alu('PASSA').write_register().on('WZN', 'WC', 'CSH')
         flags = ('WZN',) if alu_ops[function] in ('AND', 'OR', 'XOR') else ALL_FLAGS
         return Step('FETCH').x('RF').alu(alu_ops[function], 1 if function == 1 else 0).write_register().on(*flags)
     if opcode == 1:
@@ -283,13 +322,11 @@ def execute(state, opcode, function, take, cnt_zero):
             return Step('E2').x('RF').y_imm('IMM6').alu('ADD').on('/LDMAR')
         step = Step('FETCH').address_mar().on('MREAD', 'MLOAD', 'RFWE')
         return step.on('WORD') if opcode == 5 else step
-    if opcode in (6, 8):  # SW, SB: MAR <- a + imm6, then three cycles with the data on the bus
+    if opcode in (6, 8):  # SW, SB: MAR <- a + imm6, then a write cycle (/WE pulses while CLK is low)
         if state == 'E1':
             return Step('E2').x('RF').y_imm('IMM6').alu('ADD').on('/LDMAR')
-        step = Step({'E2': 'E3', 'E3': 'E4', 'E4': 'FETCH'}[state]).address_mar().on('RBDEST', 'STORE')
-        if opcode == 6:
-            step.on('WORD')
-        return step.on('WSTROBE') if state == 'E3' else step
+        step = Step('FETCH').address_mar().on('RBDEST', 'STORE', 'WSTROBE')
+        return step.on('WORD') if opcode == 6 else step
     if opcode == 9:
         return Step('FETCH').x('PC').y_imm('OFF8').alu('ADD').on('/LDPC') if take else Step('FETCH')
     if opcode == 10:
@@ -325,7 +362,7 @@ def execute(state, opcode, function, take, cnt_zero):
     return illegal
 
 
-def control(state, opcode, function, take, irq, cnt_zero):
+def control(state, opcode, function, take, irq):
     name = STATES[state] if state < len(STATES) else 'ILLEGAL'
     if name == 'RESET':
         return Step('FETCH').y_imm('ZERO').alu('PASSB').on('/LDPC')
@@ -341,15 +378,15 @@ def control(state, opcode, function, take, irq, cnt_zero):
         return Step('INT1').on('TICK', 'HALTED') if irq else Step('HALT').on('TICK', 'HALTED')
     if name == 'ILLEGAL':
         return Step('ILLEGAL').on('ILLEGAL')
-    return execute(name, opcode, function, take, cnt_zero)
+    return execute(name, opcode, function, take)
 
 
 def make_control_images():
     image_a, image_b = bytearray(), bytearray()
-    for address in range(1 << 16):
+    for address in range(1 << len(CONTROL_ADDRESS)):
         state, opcode, function = address & 31, (address >> 5) & 15, (address >> 9) & 15
-        take, irq, cnt_zero = (address >> 13) & 1, (address >> 14) & 1, (address >> 15) & 1
-        word_a, word_b = control(state, opcode, function, take, irq, cnt_zero).word()
+        take, irq = (address >> 13) & 1, (address >> 14) & 1
+        word_a, word_b = control(state, opcode, function, take, irq).word()
         image_a += word_a.to_bytes(4, 'little')
         image_b += word_b.to_bytes(3, 'little')
     for name, image in (('Control A.bin', image_a), ('Control B.bin', image_b)):
@@ -361,13 +398,13 @@ def make_control_unit():
     names_a = [name for name, _ in CONTROL_A]
     names_b = [name for name, _ in CONTROL_B][:-5]
     b = Builder('Control Unit',
-                'The microcode sequencer: a 5-bit state register and two 64K-word ROMs, Control A.bin (28 '
-                'bits) and Control B.bin (22 bits), both made by Tools/make_cpu.py. The ROMs see the state, '
-                'the opcode, the function (IR2-0, or IR11-8 for SYS), TAKE (the branch condition holds), IRQ '
-                'and CNTZERO (the shift count ran out); they give every control signal plus the next state, '
+                'The microcode sequencer: a 5-bit state register and two 32K-word ROMs, Control A.bin (30 '
+                'bits) and Control B.bin (20 bits), both made by Tools/make_cpu.py. The ROMs see the state, '
+                'the opcode, the function (IR2-0, or IR11-8 for SYS), TAKE (the branch condition holds) and '
+                'IRQ; they give every control signal plus the next state, '
                 'which loads on the rising edge of CLK. Power-up state 0 is RESET.')
     ir = {i: b.input('IR%d' % i) for i in list(range(3)) + list(range(8, 16))}
-    take, irq, cnt_zero, clock = b.input('TAKE'), b.input('IRQ'), b.input('CNTZERO'), b.input('CLK')
+    take, irq, clock = b.input('TAKE'), b.input('IRQ'), b.input('CLK')
     low = b.gate('Low', 1)
 
     # The function field: IR2-0 for ALU and ALU2, IR11-8 for SYS (opcode 12 = 1100).
@@ -383,7 +420,7 @@ def make_control_unit():
             b.rom(4, CONTROL_ADDRESS, names_b + ['N0', 'N1', 'N2', 'N3', 'N4'], image='Control B.bin')]
     for rom in roms:
         sources = (['%d.Q' % ff for ff in state] + [ir[12 + i] for i in range(4)] +
-                   ['%d.Y%d' % (function, i) for i in range(4)] + [take, irq, cnt_zero])
+                   ['%d.Y%d' % (function, i) for i in range(4)] + [take, irq])
         for name, source in zip(CONTROL_ADDRESS, sources):
             b.wire(source, '%d.%s' % (rom, name))
         b.wire(low, '%d./CE' % rom)
@@ -414,7 +451,8 @@ def make_cpu():
     b = Builder('ISA16 CPU',
                 'The ISA-16 processor. Memory interface: A0-15 address, DO0-15 data out (driven only while '
                 'storing), DI0-15 data in, /OE read strobe, /WEL and /WEH write strobes for the even (low) and '
-                'odd (high) byte. TIRQ is the timer\'s interrupt request, ACK says it was taken, TICK marks '
+                'odd (high) byte, low only while CLK is low; /WRL is /WEL for the whole write cycle, for parts that '
+                'latch on the clock (the Timer). TIRQ is the timer\'s interrupt request, ACK says it was taken, TICK marks '
                 'each instruction. HALTED: HALT ran (waiting for an interrupt); ILLEGAL: stopped on an illegal '
                 'instruction.')
     clock = b.input('CLK')
@@ -422,7 +460,7 @@ def make_cpu():
     timer_irq = b.input('TIRQ')
     a_out = b.bus_output('A', 16, 14)
     do_out = b.bus_output('DO', 16, 15)
-    strobes = {name: b.output(name, 16) for name in ('/OE', '/WEL', '/WEH', 'ACK', 'TICK', 'HALTED', 'ILLEGAL')}
+    strobes = {name: b.output(name, 16) for name in ('/OE', '/WEL', '/WEH', '/WRL', 'ACK', 'TICK', 'HALTED', 'ILLEGAL')}
     low, high = b.gate('Low', 1), b.gate('High', 1)
 
     control = b.part('Control Unit', 2, 50)
@@ -508,8 +546,19 @@ def make_cpu():
         b.wire(c('OP%d' % i), '%d.OP%d' % (alu, i))
     carry_in = b.gate2('Or', 7, c('CIN1'), b.gate2('And', 7, c('CINC'), '%d.C' % status))
     b.wire(carry_in, '%d.Cin' % alu)
-    for flag in 'ZNCV':
+    shifter = b.part('Shifter 16', 6, 40)
+    for i in range(16):
+        b.wire(qa[i], '%d.A%d' % (shifter, i))
+        b.wire('%d.Y%d' % (shifter, i), x_bus[i])
+    for i in range(4):
+        b.wire(qb[i], '%d.N%d' % (shifter, i))
+    b.wire(b.gate1('Not', 5, ir_bit[1]), '%d.LEFT' % shifter)  # SHL 101, SHR 110, SAR 111
+    b.wire(b.gate2('And', 5, ir_bit[1], ir_bit[0]), '%d.ARITH' % shifter)
+    b.wire('%d.C' % status, '%d.CIN' % shifter)
+    b.wire(c('/XSH'), '%d./OE' % shifter)
+    for flag in 'ZNV':
         b.wire('%d.%s' % (alu, flag), '%d.%sIN' % (status, flag))
+    b.wire(b.mux(7, '%d.C' % alu, '%d.C' % shifter, c('CSH')), '%d.CIN' % status)
     for name in ('WZN', 'WC', 'WV', 'RESTORE', 'SAVE', 'IESET', 'IECLR'):
         b.wire(c(name), '%d.%s' % (status, name))
     b.wire(clock, '%d.CLK' % status)
@@ -521,20 +570,11 @@ def make_cpu():
     b.wire(low, '%d./CE' % condition)
     b.wire(low, '%d./OE' % condition)
 
-    # Shift counter: loads b & 15 from the Y bus (wired from one of the bus's drivers: same net).
-    counter = b.part('Counter 4', 7, 8)
-    for i in range(4):
-        b.wire('%d.Y%d' % (drivers['/YRF'], i), '%d.D%d' % (counter, i))
-    b.wire(c('CNTLOAD'), '%d.LOAD' % counter)
-    b.wire(c('CNTDEC'), '%d.DEC' % counter)
-    b.wire(clock, '%d.CLK' % counter)
-
     # Control unit inputs.
     for i in list(range(3)) + list(range(8, 16)):
         b.wire(ir_bit[i], c('IR%d' % i))
     b.wire('%d.TAKE' % condition, c('TAKE'))
     b.wire(b.gate2('And', 8, timer_irq, '%d.IE' % status), c('IRQ'))
-    b.wire('%d.ZERO' % counter, c('CNTZERO'))
     b.wire(clock, c('CLK'))
 
     # Byte lanes. A word uses both; a byte at an even address the low (even) lane, at an odd one the high.
@@ -569,8 +609,10 @@ def make_cpu():
     lane(13, qb[:8], do_out[8:], c('STORE'), byte_odd, 'low to high')
 
     b.wire(b.gate1('Not', 15, c('MREAD')), strobes['/OE'])
-    b.wire(b.gate2('Nand', 15, c('WSTROBE'), even_ok), strobes['/WEL'])
-    b.wire(b.gate2('Nand', 15, c('WSTROBE'), odd_ok), strobes['/WEH'])
+    clock_low = b.gate1('Not', 14, clock)
+    b.wire(b.gate2('Nand', 15, c('WSTROBE'), even_ok), strobes['/WRL'])
+    b.wire(b.gate2('Nand', 15, b.gate2('And', 14, c('WSTROBE'), clock_low), even_ok), strobes['/WEL'])
+    b.wire(b.gate2('Nand', 15, b.gate2('And', 14, c('WSTROBE'), clock_low), odd_ok), strobes['/WEH'])
     for name in ('ACK', 'TICK', 'HALTED', 'ILLEGAL'):
         b.wire(c(name), strobes[name])
     b.save()
@@ -678,7 +720,7 @@ def make_computer():
         b.wire('%d.DO%d' % (cpu, i), '%d.D%d' % (timer, i))
         b.wire('%d.Q%d' % (timer, i), '%d.DI%d' % (cpu, i))
     b.wire('%d./TIMER' % decode, '%d./CE' % timer)
-    b.wire('%d./WEL' % cpu, '%d./WE' % timer)
+    b.wire('%d./WRL' % cpu, '%d./WE' % timer)
     b.wire('%d./OE' % cpu, '%d./OE' % timer)
     for name in ('TICK', 'ACK'):
         b.wire('%d.%s' % (cpu, name), '%d.%s' % (timer, name))
@@ -695,6 +737,7 @@ if __name__ == '__main__':
     make_mux()
     make_counter(4)
     make_counter(16)
+    make_shifter()
     make_immediate_unit()
     make_status()
     make_control_images()
