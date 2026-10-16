@@ -14,6 +14,7 @@ project(Kestrel16 LANGUAGES C CXX)
 #   Programs/*.c         -> Binary/Programs/*_c.bin (compiled, then assembled)
 #   Tools/make_*.py      -> Components/*.yaml and *.bin: the hardware, generated at build time
 #                        (Python 3; target "hardware"). Not in version control.
+#   Tools/eda/kicad.py   -> Build/KiCad/: the hardware as KiCad schematics (target "kicad", optional)
 #
 # Configure and build:   cmake -S . -B Build && cmake --build Build
 # Run a program:         cmake --build Build --target run_Fibonacci_c       (emulator)
@@ -224,6 +225,19 @@ add_custom_command(
 add_custom_target(hardware ALL DEPENDS ${HARDWARE_FILES})
 add_dependencies(KestrelSimulator hardware)
 
+# The schematics: Tools/eda/kicad.py turns the hardware into a KiCad project, one sheet per
+# component, chips from Tools/eda/parts.yaml, in Build/KiCad/<component>. Not part of the default
+# build: it needs KiCad 9 (for its symbol libraries) and PyYAML.
+set(KICAD_TOP "Kestrel16 Computer" CACHE STRING "The component the kicad target exports")
+add_custom_target(kicad
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/Tools/eda/kicad.py ${KICAD_TOP}
+            -o ${CMAKE_BINARY_DIR}/KiCad/${KICAD_TOP}
+    COMMENT "Generating the KiCad schematics for ${KICAD_TOP}"
+    VERBATIM
+)
+add_dependencies(kicad hardware)
+find_program(KICAD_CLI kicad-cli PATHS "$ENV{ProgramFiles}/KiCad/9.0/bin" "/Applications/KiCad/KiCad.app/Contents/MacOS")
+
 # ---------------------------------------------------------------------------
 # Programs: every Programs/*.s is assembled into Binary/Programs/<name>.bin, and gets a
 # run_<name> target. They rebuild when the source or the assembler changes.
@@ -326,6 +340,13 @@ endforeach()
 add_test(NAME simulator_self_test COMMAND KestrelSimulator --self-test)
 # The machine's components (ALU, ...) against the emulator.
 add_test(NAME hardware_check COMMAND KestrelSimulator --components ${CMAKE_SOURCE_DIR}/Components --check-hardware)
+# The KiCad schematics, if KiCad is installed: kicad-cli's netlist of them must match the
+# components net for net, with no ERC errors.
+if(KICAD_CLI)
+    add_test(NAME kicad_round_trip COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/Tools/eda/kicad.py
+             "Kestrel16 Computer" -o ${CMAKE_BINARY_DIR}/KiCad/Test --check --kicad-cli ${KICAD_CLI})
+    set_tests_properties(kicad_round_trip PROPERTIES TIMEOUT 300)
+endif()
 
 # What each program prints. The ones also listed in GATE_LEVEL_TESTS run on the gate-level
 # computer too, which has to print the same.

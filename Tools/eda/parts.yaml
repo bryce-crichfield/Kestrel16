@@ -1,0 +1,110 @@
+# How each simulator primitive becomes a real chip on a KiCad schematic. Read by Tools/eda/kicad.py.
+#
+# The netlists in Components/ stay purely logical; everything physical lives here. For each primitive kind:
+#   symbol     KiCad library symbol, as Library:Name. The drawing only; the part number goes in value.
+#   value      the part to buy.
+#   footprint  KiCad footprint, carried into the schematic for layout later.
+#   pins       logical pin -> hardware pin number, a list with one entry per unit for multi-gate chips.
+#              Gates of one kind in a component are packed into shared packages, unit by unit.
+#   tie        hardware pins wired to VCC or GND in every unit, used or not (a 74HC74's /S and /R).
+#   unused     what each logical input of a leftover unit is tied to. Leftover outputs get no-connect flags.
+#   power      supply pins; they sit on the chip's power unit, or on unit 1 for single-unit chips.
+# Memories (ROM, RAM) list address and data pins in order instead: the netlist's Nth address or data pin
+# goes to the Nth hardware pin, whatever its name. Address pins the netlist doesn't use are tied to GND.
+# The simulator reads an unconnected input as 0, so the schematic ties every unconnected input to GND.
+
+And:
+  symbol: 74xx:74LS08
+  value: 74HC08
+  footprint: Package_DIP:DIP-14_W7.62mm
+  pins: {A: [1, 4, 9, 12], B: [2, 5, 10, 13], Y: [3, 6, 8, 11]}
+  power: {VCC: 14, GND: 7}
+  unused: {A: GND, B: GND}
+
+Or:
+  symbol: 74xx:74LS32
+  value: 74HC32
+  footprint: Package_DIP:DIP-14_W7.62mm
+  pins: {A: [1, 4, 9, 12], B: [2, 5, 10, 13], Y: [3, 6, 8, 11]}
+  power: {VCC: 14, GND: 7}
+  unused: {A: GND, B: GND}
+
+Nand:
+  symbol: 74xx:74LS00
+  value: 74HC00
+  footprint: Package_DIP:DIP-14_W7.62mm
+  pins: {A: [1, 4, 9, 12], B: [2, 5, 10, 13], Y: [3, 6, 8, 11]}
+  power: {VCC: 14, GND: 7}
+  unused: {A: GND, B: GND}
+
+Nor:
+  symbol: 74xx:74LS02
+  value: 74HC02
+  footprint: Package_DIP:DIP-14_W7.62mm
+  pins: {A: [2, 5, 8, 11], B: [3, 6, 9, 12], Y: [1, 4, 10, 13]}
+  power: {VCC: 14, GND: 7}
+  unused: {A: GND, B: GND}
+
+Xor:
+  symbol: 74xx:74LS86
+  value: 74HC86
+  footprint: Package_DIP:DIP-14_W7.62mm
+  pins: {A: [1, 4, 9, 12], B: [2, 5, 10, 13], Y: [3, 6, 8, 11]}
+  power: {VCC: 14, GND: 7}
+  unused: {A: GND, B: GND}
+
+Not:
+  symbol: 74xx:74LS04
+  value: 74HC04
+  footprint: Package_DIP:DIP-14_W7.62mm
+  pins: {A: [1, 3, 5, 9, 11, 13], Y: [2, 4, 6, 8, 10, 12]}
+  power: {VCC: 14, GND: 7}
+  unused: {A: GND}
+
+FlipFlop:
+  symbol: 74xx:74LS74
+  value: 74HC74
+  footprint: Package_DIP:DIP-14_W7.62mm
+  pins: {D: [2, 12], CLK: [3, 11], Q: [5, 9], /Q: [6, 8]}
+  tie: {VCC: [4, 1, 10, 13]}      # /S and /R, both units
+  power: {VCC: 14, GND: 7}
+  unused: {D: GND, CLK: GND}
+
+TriState:
+  symbol: 74xx:74LS125
+  value: 74HC125
+  footprint: Package_DIP:DIP-14_W7.62mm
+  pins: {A: [2, 5, 9, 12], /OE: [1, 4, 10, 13], Y: [3, 6, 8, 11]}
+  power: {VCC: 14, GND: 7}
+  unused: {A: GND, /OE: VCC}      # disabled
+
+ROM:
+  symbol: Memory_EPROM:27C512
+  value: W27C512                  # 64K x 8, electrically erasable
+  footprint: Package_DIP:DIP-28_W15.24mm
+  address: [10, 9, 8, 7, 6, 5, 4, 3, 25, 24, 21, 23, 2, 26, 27, 1]
+  data: [11, 12, 13, 15, 16, 17, 18, 19]
+  pins: {/CE: 20, /OE: 22}
+  power: {VCC: 28, GND: 14}
+
+RAM:
+  symbol: Memory_RAM:KM62256CLP
+  value: 62256                    # 32K x 8 SRAM
+  footprint: Package_DIP:DIP-28_W15.24mm
+  address: [10, 9, 8, 7, 6, 5, 4, 3, 25, 24, 21, 23, 2, 26, 1]
+  data: [11, 12, 13, 15, 16, 17, 18, 19]
+  pins: {/CE: 20, /OE: 22, /WE: 27}
+  power: {VCC: 28, GND: 14}
+
+Clock:
+  symbol: Oscillator:ACO-xxxMHz
+  value: ACO-1MHz
+  footprint: Oscillator:Oscillator_DIP-14
+  pins: {clk: 8}
+  power: {VCC: 14, GND: 7}
+
+Terminal:                         # stands in for a UART; a header for now
+  symbol: Connector_Generic:Conn_01x13
+  value: Terminal
+  footprint: Connector_PinHeader_2.54mm:PinHeader_1x13_P2.54mm_Vertical
+  pins: {RS: 1, /CE: 2, /OE: 3, /WE: 4, D0: 5, D1: 6, D2: 7, D3: 8, D4: 9, D5: 10, D6: 11, D7: 12, IRQ: 13}
