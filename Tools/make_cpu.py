@@ -12,9 +12,17 @@ Parts (each its own component, most of them a familiar 74HC chip or two):
     Immediate Unit      the instruction's constants, one at a time onto the Y bus
     Status              the flags Z N C V, the interrupt enable, and their copies saved on an exception
     Control Unit        a 5-bit state register and two microcode ROMs (Control A.bin, Control B.bin)
-    Kestrel16 CPU           the datapath: register file, ALU, PC, IR, MAR, T, EPC and the buses between them
-    Timer               the emulator's timer: an interrupt every N instructions
-    Kestrel16 Computer      the CPU, two 32K x 8 RAMs (even and odd bytes), the Terminal and the Timer
+    Kestrel16 CPU       the datapath: register file, ALU, PC, IR, MAR, T, EPC and the buses between them
+    Timer               an interrupt every N instructions, until acknowledged
+    Interrupt Controller  the slots' interrupt requests, pending and mask registers, one INT to the CPU
+    System Slot         slot 0 on the main board: the Interrupt Controller and the Timer
+    Terminal Card       the UART as an I/O backplane card
+    Clock Stretcher     holds the clock back while a card pulls READY low (wait states)
+    Kestrel16 Computer  the main board (CPU, two 32K x 8 RAMs, clock, address decode, System Slot) and the
+                        I/O backplane: slots 1-7 on a 32-pin connector, the Terminal Card in slot 1
+
+I/O is memory mapped: 0xFC00-0xFFFF is 8 slots of 128 bytes (Source/Kestrel/MemoryMap.h), and the
+slot connector's signals are listed above make_timer() below.
 
 The CPU is multi-cycle. An instruction is fetched (IR <- memory[PC], PC += 2 in the Program Counter)
 and then takes one to three more cycles. Fetching overlaps execution: when an instruction's last
@@ -28,7 +36,7 @@ so /WE ends at the rising edge, before the address can change.
 import os
 from hdl import *
 from circuit import COMPONENTS
-from definitions import Addresses, AluFunctions, Alu2Functions, AluOperations, Conditions, Devices, Opcodes, SystemFunctions
+from definitions import Addresses, AluFunctions, Alu2Functions, AluOperations, Conditions, IoBus, Opcodes, Slots, SystemFunctions
 
 BINARY = '../Binary/Programs/Fibonacci.bin'  # what the computer's RAM starts out holding
 
@@ -178,7 +186,7 @@ CONTROL_A = [('/XRF', 0), ('/XPC', 1), ('/XEPC', 1), ('/XT', 1), ('/XSH', 1), ('
              ('/LDIR', 1), ('PCINC', 0), ('RFWE', 0), ('WSEL7', 0), ('RASYS', 0), ('RBDEST', 0), ('OP0', 0), ('OP1', 0),
              ('OP2', 0), ('OP3', 0), ('CIN1', 0), ('CINC', 0), ('IMM0', 0), ('IMM1', 0), ('IMM2', 0)]
 CONTROL_B = [('WZN', 0), ('WC', 0), ('WV', 0), ('RESTORE', 0), ('SAVE', 0), ('IESET', 0), ('IECLR', 0),
-             ('ACK', 0), ('MREAD', 0), ('STORE', 0), ('WSTROBE', 0), ('WORD', 0), ('TICK', 0), ('HALTED', 0), ('ILLEGAL', 0), ('N0', 0), ('N1', 0), ('N2', 0), ('N3', 0), ('N4', 0)]
+             ('MREAD', 0), ('STORE', 0), ('WSTROBE', 0), ('WORD', 0), ('TICK', 0), ('HALTED', 0), ('ILLEGAL', 0), ('N0', 0), ('N1', 0), ('N2', 0), ('N3', 0), ('N4', 0)]
 CONTROL_ADDRESS = ['S0', 'S1', 'S2', 'S3', 'S4', 'OP0', 'OP1', 'OP2', 'OP3', 'F0', 'F1', 'F2', 'F3', 'TAKE', 'IRQ']
 
 STATES = ['RESET', 'FETCH', 'FETCH2', 'E1', 'E2', 'E3', 'E4', 'INT1', 'INT2', 'HALT', 'ILLEGAL']
@@ -362,7 +370,7 @@ def control(state, opcode, function, take, irq):
     if name == 'FETCH2':  # the first instruction of the handler: its tick already happened
         return fetch(tick=False)
     if name == 'INT1':
-        return Step('INT2').x('PC').alu('PASSA').on('/LDEPC', 'SAVE', 'IECLR', 'ACK')
+        return Step('INT2').x('PC').alu('PASSA').on('/LDEPC', 'SAVE', 'IECLR')
     if name == 'INT2':
         return Step('FETCH2').y_imm('TWO').alu('PASSB').on('/LDPC')
     if name == 'HALT':  # sleeps, ticking, until an interrupt
@@ -390,7 +398,7 @@ def make_control_unit():
     names_b = [name for name, _ in CONTROL_B][:-5]
     with component('Control Unit',
                    'The microcode sequencer: a 5-bit state register and two 32K-word ROMs, Control A.bin (31 '
-                   'bits) and Control B.bin (20 bits), both made by Tools/make_cpu.py. The ROMs see the state, '
+                   'bits) and Control B.bin (19 bits), both made by Tools/make_cpu.py. The ROMs see the state, '
                    'the opcode, the function (IR2-0, or IR11-8 for SYS), TAKE (the branch condition holds) and '
                    'IRQ; they give every control signal plus the next state, '
                    'which loads on the rising edge of CLK. Power-up state 0 is RESET.'):
@@ -435,12 +443,12 @@ def make_cpu():
                    'The Kestrel16 processor. Memory interface: A0-15 address, DO0-15 data out (driven only while '
                    'storing), DI0-15 data in, /OE read strobe, /WEL and /WEH write strobes for the even (low) and '
                    'odd (high) byte, low only while CLK is low; /WRL is /WEL for the whole write cycle, for parts that '
-                   'latch on the clock (the Timer). TIRQ is the timer\'s interrupt request, ACK says it was taken, TICK marks '
+                   'latch on the clock (the I/O write strobe). IRQ is the interrupt controller\'s request, TICK marks '
                    'each instruction. HALTED: HALT ran (waiting for an interrupt); ILLEGAL: stopped on an illegal '
                    'instruction.'):
         CLK = inputs('CLK')
         DI = bus_input('DI', 16)
-        TIRQ = inputs('TIRQ')
+        IRQ = inputs('IRQ')
         c = Part('Control Unit')
 
         def register():
@@ -519,7 +527,7 @@ def make_cpu():
         for i in list(range(3)) + list(range(8, 16)):
             IR[i] >> c['IR%d' % i]
         condition.TAKE >> c.TAKE
-        (TIRQ & status.IE) >> c.IRQ
+        (IRQ & status.IE) >> c.IRQ
         CLK >> c.CLK
 
         # Byte lanes. A word uses both; a byte at an even address the low (even) lane, at an odd one the high.
@@ -554,17 +562,43 @@ def make_cpu():
         output('/WEL', nand(c.WSTROBE & clock_low, even_ok))
         output('/WEH', nand(c.WSTROBE & clock_low, odd_ok))
         output('/WRL', nand(c.WSTROBE, even_ok))
-        for name in ('ACK', 'TICK', 'HALTED', 'ILLEGAL'):
+        for name in ('TICK', 'HALTED', 'ILLEGAL'):
             output(name, c[name])
 
 
-# ---------------------------------------------------------------------------- timer and computer
+# ---------------------------------------------------------------------------- I/O
+
+# The I/O backplane's slot connector, 32 pins. Every card sees the same signals except /CS and IRQ:
+#   D0-D15        data, both ways. I/O is word-wide: there are no byte enables, a byte write to an
+#                 even address writes the register with the high byte undriven, and one to an odd
+#                 address doesn't strobe /WR at all.
+#   A0-A6         the address within the slot (128 bytes)
+#   /CS           this slot is addressed (from the main board's slot decoder)
+#   /RD           read: the card drives D while /CS and /RD are low
+#   /WR           write, low for the whole write cycle: a clocked card latches D at the rising CLK
+#                 edge that ends it; an asynchronous one gates it with CLK low (/WR | CLK), so its
+#                 strobe ends before the address can change
+#   IRQ           the card requests an interrupt, as a level, until its driver clears it at the card
+#   READY         the card holds it low to stretch the cycle (the main board holds back CLK)
+#   /RESET        reset (driven high: the machine has no reset yet)
+#   CLK           the CPU's (stretched) clock
+#   VCC, GND
+SLOT_ADDRESS_BITS = IoBus['SlotSize'].bit_length() - 1
+SLOT_PINS = 16 + SLOT_ADDRESS_BITS + 7 + 2
+assert SLOT_PINS == 32 and Addresses['IoBase'] + IoBus['SlotSize'] * IoBus['SlotCount'] == 0x10000
+
+
+def selected(CS, A, used):
+    """1 when /CS is low and the address bits above the card's registers (A<used>-A6) are 0, so a
+    card's registers appear once in its slot, as the emulator has them, rather than repeating."""
+    return ~(CS | any_of(A[used:]))
+
 
 def make_timer():
     with component('Timer',
-                   'The emulator\'s timer at 0x%04X. Writing N (/CE and /WE low at a rising CLK edge) starts it: '
-                   'every Nth TICK (one per instruction) it requests an interrupt on IRQ until ACK; N = 0 stops '
-                   'it. Reading (/CE and /OE low) gives N back on Q.' % Devices['Timer'][0]):
+                   'The timer, on the main board in the system slot. Writing N (/CE and /WE low at a rising CLK '
+                   'edge) starts it: every Nth TICK (one per instruction) it requests an interrupt on IRQ until ACK '
+                   'is 1 at a rising CLK edge; N = 0 stops it. Reading (/CE and /OE low) gives N back on Q.'):
         D = bus_input('D', 16)
         CE, WE, OE = inputs('/CE', '/WE', '/OE')
         TICK, ACK, CLK = inputs('TICK', 'ACK', 'CLK')
@@ -595,30 +629,123 @@ def make_timer():
         output('IRQ', pending.Q | fire_now)
 
 
+def make_interrupt_controller():
+    with component('Interrupt Controller',
+                   'Gathers the slots\' interrupt requests: IRQn is slot n\'s. INT is 1 while any request is also '
+                   'enabled in the mask. Two registers, picked by RS: 0 PENDING (read: the IRQ lines as they are), '
+                   '1 MASK (read and write; bit n lets slot n interrupt). The mask loads from D0-D7 at a rising CLK '
+                   'edge with /CE and /WE low, and is 0 at power-up. Reading (/CE and /OE low) drives Q0-Q7.'):
+        D, IRQ = bus_input('D', 8), bus_input('IRQ', 8)
+        CE, WE, OE, RS, CLK = inputs('/CE', '/WE', '/OE', 'RS', 'CLK')
+        load = ~(CE | WE) & RS
+        mask = []
+        for d in D:
+            ff = flip_flop(CLK)
+            mux(load, ff.Q, d) >> ff.D
+            mask.append(ff.Q)
+        read = ~(CE | OE)
+        Q = output('Q', width=8)
+        drive(IRQ, nand(read, ~RS)) >> Q
+        drive(mask, nand(read, RS)) >> Q
+        output('INT', any_of([irq & m for irq, m in zip(IRQ, mask)]))
+
+
+def make_system_slot():
+    with component('System Slot',
+                   'Slot 0 (0x%04X), on the main board: the Interrupt Controller and the Timer behind the slot '
+                   'interface. Registers by A1-A2: 0 interrupt pending, 1 interrupt mask, 2 timer reload, 3 timer '
+                   'acknowledge (a write drops the timer\'s request). IRQ1-7 are the backplane slots\' requests; '
+                   'the timer is interrupt 0 (IRQ0 is unused). INT goes to the CPU. TICK comes from the CPU, one '
+                   'per instruction.' % Addresses['IoBase']):
+        D, A = bus_input('D', 16), bus_input('A', SLOT_ADDRESS_BITS)
+        CS, RD, WR, CLK, TICK = inputs('/CS', '/RD', '/WR', 'CLK', 'TICK')
+        IRQ = bus_input('IRQ', IoBus['SlotCount'])
+        here = selected(CS, A, 3)
+        Q = output('Q', width=16)
+
+        timer = Part('Timer')
+        D >> timer.D
+        nand(here, A[2] & ~A[1]) >> timer['/CE']
+        WR >> timer['/WE']
+        RD >> timer['/OE']
+        TICK >> timer.TICK
+        (here & (A[2] & A[1]) & ~WR) >> timer.ACK
+        CLK >> timer.CLK
+        timer.Q >> Q
+
+        controller = Part('Interrupt Controller')
+        D[:8] >> controller.D
+        bus(timer.IRQ, IRQ[1:]) >> controller.IRQ
+        nand(here, ~A[2]) >> controller['/CE']
+        WR >> controller['/WE']
+        RD >> controller['/OE']
+        A[1] >> controller.RS
+        CLK >> controller.CLK
+        controller.Q >> Q[:8]
+        output('INT', controller.INT)
+
+
+def make_terminal_card():
+    with component('Terminal Card',
+                   'The UART as a backplane card (slot %d in the computer): the Terminal behind the slot interface. '
+                   'Registers by A1: 0 data, 1 status. IRQ is 1 while a typed key is waiting. It never needs a '
+                   'wait, so READY is 1.' % Slots['Uart']):
+        D, A = bus_input('D', 16), bus_input('A', SLOT_ADDRESS_BITS)
+        CS, RD, WR, CLK = inputs('/CS', '/RD', '/WR', 'CLK')
+        terminal = primitive('Terminal')
+        A[1] >> terminal.RS
+        ~selected(CS, A, 2) >> terminal['/CE']
+        RD >> terminal['/OE']
+        (WR | CLK) >> terminal['/WE']  # the write strobe ends at the rising edge, before the address moves
+        D[:8] >> terminal.D  # a Terminal's D pins are one wire both ways, so this is its read path too
+        output('IRQ', terminal.IRQ)
+        output('READY', high())
+
+
+def make_clock_stretcher():
+    with component('Clock Stretcher',
+                   'Wait states for the I/O backplane. Y is CLK, except that a rising edge is held back while READY '
+                   'was 0 at the falling edge before it: a slow card pulls READY low during the cycle, and Y stays '
+                   'low (the CPU and the cards wait, mid-cycle) until READY goes back to 1.'):
+        CLK, READY = inputs('CLK', 'READY')
+        hold = flip_flop(~CLK)  # changes only while CLK is low, so Y never glitches
+        ~READY >> hold.D
+        output('Y', CLK & hold['/Q'])
+
+
 def decode_image():
-    """Address decode: A2-A15 -> /RAM (below I/O), /TERMINAL (the UART), /TIMER; 1 = not selected."""
-    within = lambda address, device: Devices[device][0] <= address < Devices[device][0] + Devices[device][1]
+    """Address decode: A10-A15 -> /RAM (below IoBase) and /IO (from it up); 1 = not selected."""
     image = bytearray()
-    for index in range(1 << 14):
-        address = index << 2
-        ram = address < Addresses['IoBase']
-        terminal, timer = within(address, 'Uart'), within(address, 'Timer')
-        image.append(int(not ram) | int(not terminal) << 1 | int(not timer) << 2)
+    for index in range(1 << 6):
+        io = index << 10 >= Addresses['IoBase']
+        image.append(int(io) | int(not io) << 1)
     with open(os.path.join(COMPONENTS, 'Address Decode.bin'), 'wb') as file:
         file.write(image)
 
 
 def make_computer():
+    slot_base = lambda slot: Addresses['IoBase'] + slot * IoBus['SlotSize']
     with component('Kestrel16 Computer',
-                   'The whole machine: Kestrel16 CPU, 64K of RAM as two 32K x 8 chips (even and odd bytes, preloaded '
-                   'from %s), the Terminal at 0x%04X and the Timer at 0x%04X, picked by an address-decode ROM '
-                   '(Address Decode.bin). Simulate it and run the clock; the program prints in the Terminal pane. '
-                   'To run another program, change the two RAMs\' image.' % (BINARY, Devices['Uart'][0], Devices['Timer'][0])):
+                   'The whole machine. Main board: the Kestrel16 CPU, 64K of RAM as two 32K x 8 chips (even and odd '
+                   'bytes, preloaded from %s), the clock (through the Clock Stretcher, for wait states), the address '
+                   'decode (a ROM, Address Decode.bin, picks RAM or I/O; a Decoder 3to8 on A7-A9 picks the slot) and '
+                   'the System Slot at 0x%04X. The I/O backplane: slots 1-7, 128 bytes each, with the Terminal Card '
+                   'in slot %d (0x%04X). Simulate it and run the clock; the program prints in the Terminal pane. To '
+                   'run another program, change the two RAMs\' image.'
+                   % (BINARY, slot_base(0), Slots['Uart'], slot_base(Slots['Uart']))):
         CLK = clock_source()
+        stretcher = Part('Clock Stretcher')
+        CLK >> stretcher.CLK
+        clock = stretcher.Y  # what the CPU and the cards run on
         cpu = Part('Kestrel16 CPU')
-        CLK >> cpu.CLK
-        decode = rom(['A%d' % i for i in range(2, 16)], ['/RAM', '/TERMINAL', '/TIMER'], image='Address Decode.bin')
-        cpu.A[2:] >> [decode['A%d' % i] for i in range(2, 16)]
+        clock >> cpu.CLK
+
+        decode = rom(['A%d' % i for i in range(10, 16)], ['/RAM', '/IO'], image='Address Decode.bin')
+        cpu.A[10:] >> [decode['A%d' % i] for i in range(10, 16)]
+        slot_decoder = Part('Decoder 3to8')
+        cpu.A[SLOT_ADDRESS_BITS:SLOT_ADDRESS_BITS + 3] >> slot_decoder.A
+        ~decode['/IO'] >> slot_decoder.E
+        CS = slot_decoder['/Y']
 
         for lane in range(2):  # even bytes, then odd
             chip = ram(15, BINARY, ('even', 'odd')[lane])
@@ -629,23 +756,28 @@ def make_computer():
             cpu['/OE'] >> chip['/OE']
             cpu['/WEH' if lane else '/WEL'] >> chip['/WE']
 
-        terminal = primitive('Terminal')
-        cpu.A[1] >> terminal.RS
-        decode['/TERMINAL'] >> terminal['/CE']
-        cpu['/OE'] >> terminal['/OE']
-        cpu['/WEL'] >> terminal['/WE']
-        cpu.DO[:8] >> terminal.D
+        def slot(card, number):
+            """The signals every card gets: D, A0-A6, /CS, /RD, /WR (/WRL: words and even bytes), CLK."""
+            cpu.DO >> card.D
+            cpu.A[:SLOT_ADDRESS_BITS] >> card.A
+            CS[number] >> card['/CS']
+            cpu['/OE'] >> card['/RD']
+            cpu['/WRL'] >> card['/WR']
+            clock >> card.CLK
 
-        timer = Part('Timer')
-        cpu.DO >> timer.D
-        timer.Q >> cpu.DI
-        decode['/TIMER'] >> timer['/CE']
-        cpu['/WRL'] >> timer['/WE']
-        cpu['/OE'] >> timer['/OE']
-        cpu.TICK >> timer.TICK
-        cpu.ACK >> timer.ACK
-        CLK >> timer.CLK
-        timer.IRQ >> cpu.TIRQ
+        system = Part('System Slot')
+        slot(system, Slots['System'])
+        system.Q >> cpu.DI
+        cpu.TICK >> system.TICK
+        system.INT >> cpu.IRQ
+
+        irq = [low()] * IoBus['SlotCount']
+        terminal = Part('Terminal Card')
+        slot(terminal, Slots['Uart'])
+        irq[Slots['Uart']] = terminal.IRQ
+        bus(irq) >> system.IRQ
+        terminal.READY >> stretcher.READY  # with more cards: the AND of their READYs
+
         output('HALTED', cpu.HALTED)
         output('ILLEGAL', cpu.ILLEGAL)
 
@@ -664,6 +796,10 @@ if __name__ == '__main__':
     make_control_unit()
     make_cpu()
     make_timer()
+    make_interrupt_controller()
+    make_system_slot()
+    make_terminal_card()
+    make_clock_stretcher()
     decode_image()
     make_computer()
     print('wrote the CPU and the computer')

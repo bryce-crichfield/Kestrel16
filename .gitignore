@@ -7,11 +7,13 @@ __pycache__/
 Components/ALU 16.yaml
 Components/Bus Driver 8.yaml
 Components/Bus Driver 16.yaml
+Components/Clock Stretcher.yaml
 Components/Control Unit.yaml
 Components/Counter 4.yaml
 Components/Counter 16.yaml
 Components/Decoder 3to8.yaml
 Components/Immediate Unit.yaml
+Components/Interrupt Controller.yaml
 Components/Kestrel16 CPU.yaml
 Components/Kestrel16 Computer.yaml
 Components/Mux 2x4.yaml
@@ -20,5 +22,7 @@ Components/Register 16.yaml
 Components/Register File.yaml
 Components/Shifter 16.yaml
 Components/Status.yaml
+Components/System Slot.yaml
+Components/Terminal Card.yaml
 Components/Timer.yaml
 Components/*.bin

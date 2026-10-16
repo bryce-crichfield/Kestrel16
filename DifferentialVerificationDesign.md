@@ -93,7 +93,7 @@ The trace fields have to come from nets inside the flattened circuit.
    memory: [EvenRAM, OddRAM]          # byte lanes, interleaved
    ```
    Only the machine needs this; ordinary components don't.
-4. **Shared state types in `KestrelCore`:** an `ArchState` struct (registers, PC, flags, IE, EPC, saved flags, timer) with a `Diff()` that lists the differences by name, and a `RetireRecord` for the trace. The emulator fills them from `Cpu` (which already holds all of this: `registers`, `programCounter`, `exceptionProgramCounter`, `flags`, `exceptionFlags`, `interruptsEnabled`, `timerReload`, `timerCount`). The simulator fills them from the probes.
+4. **Shared state types in `KestrelCore`:** an `ArchState` struct (registers, PC, flags, IE, EPC, saved flags, interrupt mask, timer) with a `Diff()` that lists the differences by name, and a `RetireRecord` for the trace. The emulator fills them from `Cpu` (which already holds all of this: `registers`, `programCounter`, `exceptionProgramCounter`, `flags`, `exceptionFlags`, `interruptsEnabled`, `interruptMask`, `timerPending`, `timerReload`, `timerCount`). The simulator fills them from the probes.
 
 ### Memory
 

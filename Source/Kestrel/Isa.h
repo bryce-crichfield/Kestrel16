@@ -71,6 +71,24 @@ struct Address {
 #undef KestrelRegisterAddress
 };
 
+struct IoBus {
+#define KestrelIoBus(name, value) static constexpr int name = value;
+#include "MemoryMap.h"
+#undef KestrelIoBus
+};
+static_assert(Address::IoBase + IoBus::SlotSize * IoBus::SlotCount == 0x10000, "the slots fill the I/O space");
+
+// Slot numbers, which are also the devices' bits in the interrupt pending and mask registers.
+struct Slot {
+#define KestrelSlot(name, number) static constexpr int name = number;
+#include "MemoryMap.h"
+#undef KestrelSlot
+};
+
+constexpr int SlotOf(uint16_t ioAddress) { return (ioAddress - Address::IoBase) / IoBus::SlotSize; }
+static_assert(SlotOf(Address::TimerAcknowledge) == Slot::System && SlotOf(Address::UartStatus) == Slot::Uart,
+              "each register sits in its device's slot");
+
 struct UartStatus {
 #define KestrelUartStatusBit(name, bit) static constexpr uint16_t name = 1 << bit;
 #include "MemoryMap.h"

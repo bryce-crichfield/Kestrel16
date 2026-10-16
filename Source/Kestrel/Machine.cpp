@@ -7,6 +7,7 @@ namespace Kestrel {
 namespace {
 
 constexpr uint16_t WordAlignMask = 0xFFFE, ByteMask = 0xFF;
+constexpr uint8_t TimerBit = 1 << Slot::System, UartBit = 1 << Slot::Uart;
 constexpr unsigned ShiftAmountMask = 15;
 
 }  // namespace
@@ -17,6 +18,10 @@ constexpr unsigned ShiftAmountMask = 15;
 uint16_t Machine::IoRead(uint16_t address)
 {
     switch (address & WordAlignMask) {
+    case Address::InterruptPending:
+        return PendingInterrupts(0xFF);
+    case Address::InterruptMask:
+        return cpu.interruptMask;
     case Address::UartData:
         return terminal.KeyWaiting() ? terminal.ReadKey() : 0;
     case Address::UartStatus:
@@ -31,6 +36,12 @@ uint16_t Machine::IoRead(uint16_t address)
 void Machine::IoWrite(uint16_t address, uint16_t value)
 {
     switch (address & WordAlignMask) {
+    case Address::InterruptMask:
+        cpu.interruptMask = static_cast<uint8_t>(value & ByteMask);
+        break;
+    case Address::TimerAcknowledge:
+        cpu.timerPending = false;
+        break;
     case Address::UartData:
         terminal.Print(static_cast<uint8_t>(value & ByteMask));
         break;
@@ -91,9 +102,22 @@ void Machine::WriteByte(uint16_t address, uint8_t value)
 void Machine::TickTimer()
 {
     if (cpu.timerReload && --cpu.timerCount == 0) {
-        cpu.interruptPending = true;
+        cpu.timerPending = true;
         cpu.timerCount = cpu.timerReload;
     }
+}
+
+uint8_t Machine::PendingInterrupts(uint8_t slots)
+{
+    uint8_t pending = cpu.timerPending ? TimerBit : 0;
+    if ((slots & UartBit) && terminal.KeyWaiting()) pending |= UartBit;  // asks the terminal only if it matters
+    return static_cast<uint8_t>(pending & slots);
+}
+
+bool Machine::CanWake()
+{
+    if (!cpu.interruptsEnabled) return false;
+    return ((cpu.interruptMask & TimerBit) && (cpu.timerReload || cpu.timerPending)) || (cpu.interruptMask & UartBit);
 }
 
 uint8_t Machine::PackFlags() const
@@ -190,14 +214,14 @@ StepResult Machine::Step(StepInfo* info)
     cpu.steps++;
     TickTimer();
 
-    if (cpu.interruptPending && cpu.interruptsEnabled) {
-        cpu.interruptPending = false;
+    // Requests are levels: taking one doesn't clear it, the handler does (at the device).
+    if (cpu.interruptsEnabled && PendingInterrupts(cpu.interruptMask)) {
         cpu.halted = false;
         EnterException(cpu.programCounter);
         cpu.programCounter = Address::InterruptVector;
     }
 
-    if (cpu.halted) return (cpu.interruptsEnabled && cpu.timerReload) ? StepResult::Running : StepResult::Halted;
+    if (cpu.halted) return CanWake() ? StepResult::Running : StepResult::Halted;
 
     uint16_t address = cpu.programCounter & WordAlignMask;
     uint16_t word = ReadMemoryWord(address);

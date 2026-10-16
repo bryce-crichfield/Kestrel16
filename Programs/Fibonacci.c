@@ -1,7 +1,7 @@
 // Fibonacci.c -- print every Fibonacci number that fits in 16 bits.
 // The C version of Fibonacci.s, built with our own compiler (no preprocessor, no libc).
 
-volatile unsigned char *const UART = (volatile unsigned char *)0xFF00;
+volatile unsigned char *const UART = (volatile unsigned char *)0xFC80;
 
 void putc(char c)
 {

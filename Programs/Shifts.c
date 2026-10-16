@@ -1,5 +1,5 @@
 /* Shifts and stores: prints a checksum the emulator and the gate-level computer must agree on. */
-static void putc_(int c) { while (!(*(volatile unsigned *)0xFF02 & 2)) {} *(volatile unsigned *)0xFF00 = c; }
+static void putc_(int c) { while (!(*(volatile unsigned *)0xFC82 & 2)) {} *(volatile unsigned *)0xFC80 = c; }
 static void hex(unsigned v) { int i; for (i = 12; i >= 0; i -= 4) putc_("0123456789ABCDEF"[(v >> i) & 15]); putc_(' '); }
 
 unsigned char bytes[8];

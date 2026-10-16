@@ -2,7 +2,7 @@
 
 A 16-bit computer designed from the gates up, with its own toolchain.
 
-- **The machine:** a 16-bit RISC-style CPU with 8 registers, 64 KB of memory, memory-mapped I/O (a UART and a timer) and interrupts.
+- **The machine:** a 16-bit RISC-style CPU with 8 registers, 64 KB of memory, memory-mapped I/O in 8 slots on a 32-pin backplane (a UART card, a timer and an interrupt controller so far) and interrupts.
 - **A reference emulator:** the definition of correct behaviour.
 - **A C compiler:** structs, pointers, arrays, a preprocessor, and most of C (no floating point).
 - **An assembler:** labels, expressions, directives and pseudo-instructions.

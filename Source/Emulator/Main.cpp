@@ -112,8 +112,8 @@ void LoadDemo(Machine& machine)
         EncodeSystem(SystemFunction::ReturnFromInterrupt, 0),        // 0002: reti (interrupt stub)
         EncodeLong(Opcode::LoadImmediate, 0, 0x00),                  // 0004: ldi r0, 0x00
         EncodeLong(Opcode::LoadHighImmediate, 0, 0x01),              // 0006: lhi r0, 0x01  (r0 = message)
-        EncodeLong(Opcode::LoadImmediate, 1, 0x00),                  // 0008: ldi r1, 0x00
-        EncodeLong(Opcode::LoadHighImmediate, 1, 0xFF),              // 000A: lhi r1, 0xFF  (r1 = UART)
+        EncodeLong(Opcode::LoadImmediate, 1, Address::UartData & 0xFF),  // 0008: ldi r1, low(UART)
+        EncodeLong(Opcode::LoadHighImmediate, 1, Address::UartData >> 8),  // 000A: lhi r1, high(UART)
         EncodeImmediate(Opcode::LoadByte, 2, 0, 0),                  // 000C: loop: lb r2, [r0+0]
         EncodeImmediate(Opcode::CompareImmediate, 0, 2, 0),          // 000E: cmpi r2, 0
         EncodeBranch(Condition::Equal, 3),                           // 0010: beq done

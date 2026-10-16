@@ -38,7 +38,7 @@ const PrimitiveInfo Primitives[PrimitiveCount] = {
                           "(D isn't driven, whatever /OE says). /OE=0 and /WE=1: drives contents[A] on D. "
                           "Contents exist only while simulating; Reset clears or randomizes them, or loads a "
                           ".bin. Wire /WE: unconnected it reads 0, which means write."},
-    {"Terminal", 0, 0, {}, {}, "A UART standing in for the screen and keyboard, like the emulator's 0xFF00. "
+    {"Terminal", 0, 0, {}, {}, "A UART standing in for the screen and keyboard, like the emulator's UART. "
                                "RS=0 (wire A1): write prints the byte on D, read takes the next typed key (0 if none). "
                                "RS=1: read gives status, bit 0 = a key is waiting, bit 1 = ready to print. "
                                "D0-D7 are on both sides, like a RAM's. A write prints when /WE (or /CE) goes back "

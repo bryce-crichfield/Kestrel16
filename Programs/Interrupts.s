@@ -3,6 +3,10 @@
 _start:
     j main
 handler:                    ; 0x0002: count interrupts
+    push r0
+    li r0, 0xFC06           ; timer acknowledge: drop the request
+    sw r0, [r0]
+    pop r0
     addi r5, r5, 1
     reti
 
@@ -11,8 +15,11 @@ main:
     li r3, 0
     li r4, 600
     li sp, 0xFE00
-    li r0, 0xFF04
-    li r1, 7
+    li r0, 0xFC02           ; interrupt mask: the timer (slot 0) only
+    li r1, 1
+    sw r1, [r0]
+    li r0, 0xFC04           ; timer reload: every 11 instructions, a little longer than the handler
+    li r1, 11
     sw r1, [r0]
     ei
 loop:
@@ -41,7 +48,7 @@ skip:
 
 hex:                        ; print r0 as 4 hex digits and a space
     li r2, 4
-    li r6, 0xFF00
+    li r6, 0xFC80           ; UART data
 digit:
     li r1, 12
     shr r1, r0, r1

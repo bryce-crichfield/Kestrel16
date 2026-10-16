@@ -189,7 +189,7 @@ int RunHardwareCheck()
         printf("--- terminal ---\n%s\n----------------\n", simulation.console.c_str());
         static const char* const Expected =
             "Fibonacci numbers that fit in 16 bits:\n0 1 1 2 3 5 8 13 21 34 55 89 144 233 377 610 987 1597 2584 "
-            "4181 6765 10946 17711 28657 46368\ntimer interrupts: 105\n";
+            "4181 6765 10946 17711 28657 46368\ntimer interrupts: 109\n";
         Check(!ReadOutput(simulation, *computer, "ILLEGAL"), "Kestrel16 Computer doesn't hit an illegal instruction");
         Check(simulation.console == Expected, "Kestrel16 Computer runs Fibonacci.bin like the emulator");
     } else {

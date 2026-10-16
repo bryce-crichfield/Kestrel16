@@ -66,6 +66,7 @@ Dependencies point downward only. Nothing in `KestrelCore` knows about the assem
 
   The assembler's table, the disassembler and the generator's opcode numbers follow automatically. Pseudo-instructions are assembler-only (`AssemblePseudoInstruction`).
 - **Moving the memory map.** Change `MemoryMap.h`. The machine, assembler (image size), compiler (stack top) and address-decode ROM follow.
+- **New I/O devices.** A device is a card in one of the 8 I/O slots (128 bytes each from `IoBase`; the 32-pin slot signals are listed in `Tools/make_cpu.py`). Give it a `KestrelSlot` and its registers in `MemoryMap.h`, its registers and its interrupt request in `Machine`'s I/O decode, and a card component plugged into `make_computer()`. Interrupts are levels: slot n is bit n of the pending and mask registers, and the driver clears its request at the card.
 - **New front ends.** Anything can call `Compile()`, `Assemble()` or `BuildProgram()` and run a `Machine` with its own `Terminal`: a debugger, a test runner, a GUI emulator.
 - **Compiler stages are separable.** The preprocessor is text → text, the lexer text → tokens, and the code generator works per function. Optimizations or a new backend slot in between stages without touching the parser.
 - **The hardware is data.** Components are YAML and ROM images. The simulator knows only primitives (gates, flip-flops, ROM, RAM, Terminal). The CPU's design lives entirely in `Tools/` and `Components/`, so it can be redesigned without touching C++.

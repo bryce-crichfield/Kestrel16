@@ -30,7 +30,8 @@ struct Cpu {
     uint8_t exceptionFlags = 0;
     bool interruptsEnabled = false;
     bool halted = false;
-    bool interruptPending = false;
+    uint8_t interruptMask = 0;      // bit n: slot n may interrupt
+    bool timerPending = false;      // the timer's interrupt request, until acknowledged
     uint16_t timerReload = 0;
     uint16_t timerCount = 0;
     unsigned long long steps = 0;
@@ -69,6 +70,8 @@ private:
     void WriteByte(uint16_t address, uint8_t value);
 
     void TickTimer();
+    uint8_t PendingInterrupts(uint8_t slots);  // the requests among slots, bit n = slot n
+    bool CanWake();                            // could an interrupt still end a HALT?
     uint8_t PackFlags() const;
     void EnterException(uint16_t returnAddress);
     bool ExecuteAlu(const Instruction& in);

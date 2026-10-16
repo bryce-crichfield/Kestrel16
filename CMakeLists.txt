@@ -200,9 +200,10 @@ target_compile_definitions(KestrelSimulator PRIVATE
 # the other two write, so they run in this order.
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(COMPONENTS_DIR ${CMAKE_SOURCE_DIR}/Components)
-set(HARDWARE_NAMES "ALU 16" "Bus Driver 8" "Bus Driver 16" "Control Unit" "Counter 4" "Counter 16"
-    "Decoder 3to8" "Immediate Unit" "Kestrel16 CPU" "Kestrel16 Computer" "Mux 2x4" "Program Counter"
-    "Register 16" "Register File" "Shifter 16" "Status" "Timer")
+set(HARDWARE_NAMES "ALU 16" "Bus Driver 8" "Bus Driver 16" "Clock Stretcher" "Control Unit" "Counter 4"
+    "Counter 16" "Decoder 3to8" "Immediate Unit" "Interrupt Controller" "Kestrel16 CPU" "Kestrel16 Computer"
+    "Mux 2x4" "Program Counter" "Register 16" "Register File" "Shifter 16" "Status" "System Slot"
+    "Terminal Card" "Timer")
 set(HARDWARE_FILES)
 foreach(name ${HARDWARE_NAMES})
     list(APPEND HARDWARE_FILES "${COMPONENTS_DIR}/${name}.yaml")
@@ -329,9 +330,11 @@ add_test(NAME hardware_check COMMAND KestrelSimulator --components ${CMAKE_SOURC
 
 # What each program prints. The ones also listed in GATE_LEVEL_TESTS run on the gate-level
 # computer too, which has to print the same.
+set(EXPECTED_Fibonacci "46368.timer interrupts: 109")  # the hardware check runs it on the gate-level computer
 set(EXPECTED_Fibonacci_c "28657 46368")
 set(EXPECTED_Shifts_c "3EFE 1CA6")     # every shift amount, byte and word stores
-set(EXPECTED_Interrupts "1FE4 0708")   # timer interrupts landing on every kind of instruction
+set(EXPECTED_Interrupts "3390 1065")   # timer interrupts landing on every kind of instruction
+set(EXPECTED_IoBus "00A5 0000 0000 0001 0000 0000 0000 0034 0000 0000")  # the system slot's registers
 # The shell reads commands: type a couple in, and --run stops once they run out.
 if(EXISTS ${CMAKE_SOURCE_DIR}/Programs/Shell.c)
     add_test(NAME program_Shell_c COMMAND ${CMAKE_COMMAND} "-DCOMMAND=$<TARGET_FILE:KestrelEmulator>;--run;${PROGRAM_OUTPUT_DIR}/Shell_c.bin"
@@ -339,8 +342,8 @@ if(EXISTS ${CMAKE_SOURCE_DIR}/Programs/Shell.c)
              -P ${CMAKE_SOURCE_DIR}/Tests/RunWithInput.cmake)
     set_tests_properties(program_Shell_c PROPERTIES PASS_REGULAR_EXPRESSION "42.*lertseK")
 endif()
-set(GATE_LEVEL_TESTS Fibonacci_c Shifts_c Interrupts)
-foreach(name Fibonacci_c Shifts_c Interrupts)
+set(GATE_LEVEL_TESTS Fibonacci_c Shifts_c Interrupts IoBus)
+foreach(name Fibonacci Fibonacci_c Shifts_c Interrupts IoBus)
     if(TEST program_${name})
         set_tests_properties(program_${name} PROPERTIES PASS_REGULAR_EXPRESSION "${EXPECTED_${name}}")
     endif()

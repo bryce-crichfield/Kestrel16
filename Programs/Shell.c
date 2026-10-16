@@ -271,7 +271,7 @@ void cmd_clear(int argc, char **argv)
 
 void cmd_about(int argc, char **argv)
 {
-    print("Kestrel16 shell -- 16-bit CPU, 64 KB, UART at 0xFF00\n");
+    print("Kestrel16 shell -- 16-bit CPU, 64 KB, UART at 0xFC80\n");
     print("commands run this session: ");
     print_int(commandCount);
     putch('\n');

@@ -16,7 +16,7 @@
 //   - Flags: Zero, Negative, Carry, Overflow.
 //     Carry means "no borrow" after subtraction (ARM style).
 //   - Reset: PC = 0x0000. Interrupt / trap vector: 0x0002 (see MemoryMap.h).
-//   - I/O is memory mapped at 0xFF00-0xFFFF (see MemoryMap.h).
+//   - I/O is memory mapped at 0xFC00-0xFFFF, in 8 slots (see MemoryMap.h).
 //
 // Encodings (bit 15 on the left, all instructions 16 bits)
 //   Register:  opcode4 | dest3[11:9] | sourceA3[8:6] | sourceB3[5:3] | function3[2:0]
