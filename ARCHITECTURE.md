@@ -9,7 +9,7 @@ This document describes how the Kestrel16 software is organized: what each piece
 ## Layers
 
 ```
-        Source/Kestrel/*.h definitions  ◄──── Tools/definitions.py ──► Tools/make_*.py ──► Components/
+        Source/Kestrel/*.h definitions  ◄──── Tools/definitions.py ──► Tools/make_*.py ──► Build/Components/
                     │
               KestrelCore  (Isa, Alu, Machine, Disassembler, Files)
                ┌────┴─────────────┐
@@ -32,7 +32,7 @@ Dependencies point downward only. Nothing in `KestrelCore` knows about the assem
 | `Source/Toolchain/` | `KestrelToolchain` | A program file → a memory image, in-process (`BuildProgram()`) |
 | `Source/Emulator/` | `KestrelEmulator` | The console as a `Terminal`, the CLI, tracing |
 | `Source/Simulator/` | `KestrelSimulator` | The circuit model, YAML files, the gate simulation, the editor, the self-test and hardware check |
-| `Tools/` | (Python) | Generates the hardware components and microcode ROMs into `Components/` |
+| `Tools/` | (Python) | Generates the hardware components and microcode ROMs into `Build/Components/` |
 | `Programs/` | (CMake) | Example and test programs, built into `Binary/Programs/` |
 | `Tests/` | (CMake) | Test helpers |
 
@@ -50,7 +50,7 @@ Dependencies point downward only. Nothing in `KestrelCore` knows about the assem
 
 5. **Namespaces.** Everything is in `Kestrel`. The compiler's internals are in `Kestrel::Compiler`, because its `Node`, `Type` and `Symbol` would otherwise collide with the simulator's types in the same executable. File-local helpers are `static` or in an anonymous namespace. Don't export a name that only one file uses.
 
-6. **Generated files are generated.** The yaml files and ROM images in `Components/` that `Tools/make_*.py` produce are build output: the `hardware` target writes them, and they are not in version control (`.gitignore` lists them). Change the generator and rebuild; don't hand-edit them. Components drawn in the editor are the exception: they are source.
+6. **Generated files are generated.** The yaml files and ROM images in `Build/Components/` that `Tools/make_*.py` produce are build output: the `hardware` target writes them, so they live under `Build/`, out of the source tree. Change the generator and rebuild; don't hand-edit them.
 
 7. **Behaviour is pinned by tests.**
    - Each program in `Programs/` has expected output in `CMakeLists.txt`. Programs listed in `GATE_LEVEL_TESTS` must print the same on the gate-level computer as on the emulator.
@@ -69,7 +69,7 @@ Dependencies point downward only. Nothing in `KestrelCore` knows about the assem
 - **New I/O devices.** A device is a card in one of the 8 I/O slots (128 bytes each from `IoBase`; the 32-pin slot signals are listed in `Tools/make_cpu.py`). Give it a `KestrelSlot` and its registers in `MemoryMap.h`, its registers and its interrupt request in `Machine`'s I/O decode, and a card component plugged into `make_computer()`. Interrupts are levels: slot n is bit n of the pending and mask registers, and the driver clears its request at the card.
 - **New front ends.** Anything can call `Compile()`, `Assemble()` or `BuildProgram()` and run a `Machine` with its own `Terminal`: a debugger, a test runner, a GUI emulator.
 - **Compiler stages are separable.** The preprocessor is text → text, the lexer text → tokens, and the code generator works per function. Optimizations or a new backend slot in between stages without touching the parser.
-- **The hardware is data.** Components are YAML and ROM images. The simulator knows only primitives (gates, flip-flops, ROM, RAM, Terminal). The CPU's design lives entirely in `Tools/` and `Components/`, so it can be redesigned without touching C++.
+- **The hardware is data.** Components are YAML and ROM images. The simulator knows only primitives (gates, flip-flops, ROM, RAM, Terminal). The CPU's design lives entirely in `Tools/`, so it can be redesigned without touching C++.
 - **Tests are cheap to add.** Drop a `.c` or `.s` into `Programs/`. It is built automatically; give it an `EXPECTED_<name>` and, optionally, add it to `GATE_LEVEL_TESTS`.
 
 ## Known compromises

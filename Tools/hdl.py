@@ -18,7 +18,7 @@ Logic:
     low(), high()          the component's constant 0 and 1 (one node each, shared)
 
 Parts:
-    part = Part('Register 16')     a saved component; its ports come from Components/Register 16.yaml
+    part = Part('Register 16')     a saved component; its ports come from Build/Components/Register 16.yaml
     part.D, part['/LOAD']          a bus port is a Bus, a one-bit port a Signal; unknown names are errors
     flip_flop(clock), tristate(a, oe_not), rom(...), ram(...), clock_source(), primitive(kind)
     drive(bus, oe_not)             a Bus Driver 8 / 16 part: returns its Y
@@ -313,7 +313,7 @@ class _Circuit:
 
 @contextmanager
 def component(name, description):
-    """Describe a component inside the with block; it's saved to Components/<name>.yaml at the end."""
+    """Describe a component inside the with block; it's saved to Build/Components/<name>.yaml at the end."""
     global _circuit
     _circuit = _Circuit(name, description)
     try:

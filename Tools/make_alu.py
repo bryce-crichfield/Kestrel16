@@ -2,8 +2,8 @@
 
     python Tools/make_alu.py
 
-Writes Components/ALU Slice.bin, the image burned into each of the four slice ROMs (a 64K x 8
-EEPROM such as a 27C512), and Components/ALU 16.yaml, which wires four slices together.
+Writes Build/Components/ALU Slice.bin, the image burned into each of the four slice ROMs (a 64K x 8
+EEPROM such as a 27C512), and Build/Components/ALU 16.yaml, which wires four slices together.
 
 Every slice holds the same image. A slice works on one nibble; its address is
 
@@ -20,7 +20,7 @@ import os
 from definitions import AluOperations
 from hdl import *
 
-COMPONENTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'Components')
+COMPONENTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'Build', 'Components')
 
 # Source/Kestrel/AluOperations.h, by code: ADD, SUB, ..., PASSA, PASSB, SXB.
 OPERATIONS = [name.upper() for name, code in sorted(AluOperations.items(), key=lambda item: item[1])]

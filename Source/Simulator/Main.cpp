@@ -5,7 +5,7 @@
 // gate by gate with a controllable clock. The model is in Circuit.h, how it is simulated in
 // Simulation.h, and the file format in ComponentFile.h.
 //
-// Each component is saved as Components/<name>.yaml. It is meant to be read and written by hand,
+// Each component is saved as Build/Components/<name>.yaml. It is meant to be read and written by hand,
 // or by an AI working from a datasheet. Components refer to the components they use by name.
 //
 // Command line

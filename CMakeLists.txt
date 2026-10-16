@@ -12,7 +12,7 @@ project(Kestrel16 LANGUAGES C CXX)
 #   Source/Simulator/    the circuit editor and gate-level simulator   -> Binary/KestrelSimulator
 #   Programs/*.s         -> Binary/Programs/*.bin (assembled with our own assembler)
 #   Programs/*.c         -> Binary/Programs/*_c.bin (compiled, then assembled)
-#   Tools/make_*.py      -> Components/*.yaml and *.bin: the hardware, generated at build time
+#   Tools/make_*.py      -> Build/Components/*.yaml and *.bin: the hardware, generated at build time
 #                        (Python 3; target "hardware"). Not in version control.
 #
 # Configure and build:   cmake -S . -B Build && cmake --build Build
@@ -175,8 +175,9 @@ target_link_libraries(KestrelCompiler PRIVATE KestrelCompilerCore)
 add_executable(KestrelEmulator Source/Emulator/Main.cpp)
 target_link_libraries(KestrelEmulator PRIVATE KestrelToolchain)
 
-# Circuit editor and simulator. It loads components from Components/, where the generators
-# below write them and the editor saves new ones.
+# Circuit editor and simulator. It loads components from Build/Components/, where the generators
+# below write them and the editor saves new ones. It's all build output, out of the source tree.
+set(COMPONENTS_DIR ${CMAKE_SOURCE_DIR}/Build/Components)
 add_executable(KestrelSimulator
     Source/Simulator/Circuit.cpp
     Source/Simulator/ComponentFile.cpp
@@ -192,14 +193,13 @@ add_executable(KestrelSimulator
 )
 target_link_libraries(KestrelSimulator PRIVATE KestrelToolchain raylib rlimgui imnodes yaml-cpp::yaml-cpp)
 target_compile_definitions(KestrelSimulator PRIVATE
-    COMPONENTS_PATH="${CMAKE_SOURCE_DIR}/Components/")
+    COMPONENTS_PATH="${COMPONENTS_DIR}/")
 
 # ---------------------------------------------------------------------------
 # The hardware: Tools/make_*.py write the components (yaml netlists) and ROM images into
-# Components/. They read the machine's definition headers, and make_cpu.py reads the components
+# Build/Components/. They read the machine's definition headers, and make_cpu.py reads the components
 # the other two write, so they run in this order.
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
-set(COMPONENTS_DIR ${CMAKE_SOURCE_DIR}/Components)
 set(HARDWARE_NAMES "ALU 16" "Bus Driver 8" "Bus Driver 16" "Clock Stretcher" "Control Unit" "Counter 4"
     "Counter 16" "Decoder 3to8" "Immediate Unit" "Interrupt Controller" "Kestrel16 CPU" "Kestrel16 Computer"
     "Mux 2x4" "Program Counter" "Register 16" "Register File" "Shifter 16" "Status" "System Slot"
@@ -253,7 +253,7 @@ foreach(source ${PROGRAM_SOURCES})
         COMMENT "Running ${name}"
     )
     add_custom_target(simulate_${name}
-        COMMAND $<TARGET_FILE:KestrelSimulator> --components ${CMAKE_SOURCE_DIR}/Components
+        COMMAND $<TARGET_FILE:KestrelSimulator> --components ${COMPONENTS_DIR}
                 --run "Kestrel16 Computer" --program ${binary} --stats
         DEPENDS ${binary} KestrelSimulator
         USES_TERMINAL
@@ -298,7 +298,7 @@ foreach(source ${C_PROGRAM_SOURCES})
         COMMENT "Running ${name}_c"
     )
     add_custom_target(simulate_${name}_c
-        COMMAND $<TARGET_FILE:KestrelSimulator> --components ${CMAKE_SOURCE_DIR}/Components
+        COMMAND $<TARGET_FILE:KestrelSimulator> --components ${COMPONENTS_DIR}
                 --run "Kestrel16 Computer" --program ${binary} --stats
         DEPENDS ${binary} KestrelSimulator
         USES_TERMINAL
@@ -326,7 +326,7 @@ endforeach()
 # The circuit simulator and the component file format check themselves.
 add_test(NAME simulator_self_test COMMAND KestrelSimulator --self-test)
 # The machine's components (ALU, ...) against the emulator.
-add_test(NAME hardware_check COMMAND KestrelSimulator --components ${CMAKE_SOURCE_DIR}/Components --check-hardware)
+add_test(NAME hardware_check COMMAND KestrelSimulator --components ${COMPONENTS_DIR} --check-hardware)
 
 # What each program prints. The ones also listed in GATE_LEVEL_TESTS run on the gate-level
 # computer too, which has to print the same.
@@ -350,7 +350,7 @@ foreach(name Fibonacci Fibonacci_c Shifts_c Interrupts IoBus)
 endforeach()
 foreach(name ${GATE_LEVEL_TESTS})
     if(TEST program_${name})
-        add_test(NAME simulate_${name} COMMAND KestrelSimulator --components ${CMAKE_SOURCE_DIR}/Components
+        add_test(NAME simulate_${name} COMMAND KestrelSimulator --components ${COMPONENTS_DIR}
                  --run "Kestrel16 Computer" --program ${PROGRAM_OUTPUT_DIR}/${name}.bin)
         set_tests_properties(simulate_${name} PROPERTIES PASS_REGULAR_EXPRESSION "${EXPECTED_${name}}" TIMEOUT 600)
     endif()

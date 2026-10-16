@@ -38,7 +38,7 @@ from hdl import *
 from circuit import COMPONENTS
 from definitions import Addresses, AluFunctions, Alu2Functions, AluOperations, Conditions, IoBus, Opcodes, Slots, SystemFunctions
 
-BINARY = '../Binary/Programs/Fibonacci.bin'  # what the computer's RAM starts out holding
+BINARY = '../../Binary/Programs/Fibonacci.bin'  # what the computer's RAM starts out holding
 
 
 # ---------------------------------------------------------------------------- small parts
