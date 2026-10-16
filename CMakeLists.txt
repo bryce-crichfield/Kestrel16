@@ -12,7 +12,8 @@ project(Kestrel16 LANGUAGES C CXX)
 #   Source/Simulator/    the circuit editor and gate-level simulator   -> Binary/KestrelSimulator
 #   Programs/*.s         -> Binary/Programs/*.bin (assembled with our own assembler)
 #   Programs/*.c         -> Binary/Programs/*_c.bin (compiled, then assembled)
-#   Components/*.yaml    circuit components saved by the simulator (and made by Tools/make_*.py)
+#   Tools/make_*.py      -> Components/*.yaml and *.bin: the hardware, generated at build time
+#                        (Python 3; target "hardware"). Not in version control.
 #
 # Configure and build:   cmake -S . -B Build && cmake --build Build
 # Run a program:         cmake --build Build --target run_Fibonacci_c       (emulator)
@@ -174,8 +175,8 @@ target_link_libraries(KestrelCompiler PRIVATE KestrelCompilerCore)
 add_executable(KestrelEmulator Source/Emulator/Main.cpp)
 target_link_libraries(KestrelEmulator PRIVATE KestrelToolchain)
 
-# Circuit editor and simulator. Components are saved next to the sources, not in Binary/,
-# so they live in version control with everything else.
+# Circuit editor and simulator. It loads components from Components/, where the generators
+# below write them and the editor saves new ones.
 add_executable(KestrelSimulator
     Source/Simulator/Circuit.cpp
     Source/Simulator/ComponentFile.cpp
@@ -192,6 +193,36 @@ add_executable(KestrelSimulator
 target_link_libraries(KestrelSimulator PRIVATE KestrelToolchain raylib rlimgui imnodes yaml-cpp::yaml-cpp)
 target_compile_definitions(KestrelSimulator PRIVATE
     COMPONENTS_PATH="${CMAKE_SOURCE_DIR}/Components/")
+
+# ---------------------------------------------------------------------------
+# The hardware: Tools/make_*.py write the components (yaml netlists) and ROM images into
+# Components/. They read the machine's definition headers, and make_cpu.py reads the components
+# the other two write, so they run in this order.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(COMPONENTS_DIR ${CMAKE_SOURCE_DIR}/Components)
+set(HARDWARE_NAMES "ALU 16" "Bus Driver 8" "Bus Driver 16" "Control Unit" "Counter 4" "Counter 16"
+    "Decoder 3to8" "Immediate Unit" "Kestrel16 CPU" "Kestrel16 Computer" "Mux 2x4" "Program Counter"
+    "Register 16" "Register File" "Shifter 16" "Status" "Timer")
+set(HARDWARE_FILES)
+foreach(name ${HARDWARE_NAMES})
+    list(APPEND HARDWARE_FILES "${COMPONENTS_DIR}/${name}.yaml")
+endforeach()
+foreach(image "ALU Slice" "Control A" "Control B" "Address Decode")
+    list(APPEND HARDWARE_FILES "${COMPONENTS_DIR}/${image}.bin")
+endforeach()
+file(GLOB HARDWARE_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/Tools/*.py ${CMAKE_SOURCE_DIR}/Source/Kestrel/*.h)
+add_custom_command(
+    OUTPUT ${HARDWARE_FILES}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${COMPONENTS_DIR}
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/Tools/make_alu.py
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/Tools/make_registers.py
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/Tools/make_cpu.py
+    DEPENDS ${HARDWARE_SOURCES}
+    COMMENT "Generating the hardware components"
+    VERBATIM
+)
+add_custom_target(hardware ALL DEPENDS ${HARDWARE_FILES})
+add_dependencies(KestrelSimulator hardware)
 
 # ---------------------------------------------------------------------------
 # Programs: every Programs/*.s is assembled into Binary/Programs/<name>.bin, and gets a

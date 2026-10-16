@@ -50,7 +50,7 @@ Dependencies point downward only. Nothing in `KestrelCore` knows about the assem
 
 5. **Namespaces.** Everything is in `Kestrel`. The compiler's internals are in `Kestrel::Compiler`, because its `Node`, `Type` and `Symbol` would otherwise collide with the simulator's types in the same executable. File-local helpers are `static` or in an anonymous namespace. Don't export a name that only one file uses.
 
-6. **Generated files are generated.** The yaml files and ROM images in `Components/` that `Tools/make_*.py` produce are build output that happens to be committed. Change the generator and re-run it; don't hand-edit them. Components drawn in the editor are the exception: they are source.
+6. **Generated files are generated.** The yaml files and ROM images in `Components/` that `Tools/make_*.py` produce are build output: the `hardware` target writes them, and they are not in version control (`.gitignore` lists them). Change the generator and rebuild; don't hand-edit them. Components drawn in the editor are the exception: they are source.
 
 7. **Behaviour is pinned by tests.**
    - Each program in `Programs/` has expected output in `CMakeLists.txt`. Programs listed in `GATE_LEVEL_TESTS` must print the same on the gate-level computer as on the emulator.

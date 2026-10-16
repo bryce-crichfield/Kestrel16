@@ -18,6 +18,7 @@ Carries ripple up from slice to slice through Cin/Cout. Operations (the OP input
 """
 import os
 from definitions import AluOperations
+from hdl import *
 
 COMPONENTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'Components')
 
@@ -73,62 +74,28 @@ def make_alu():
         'for ADC/SBC, shifts and everything else. C: adder carry, the bit shifted out, or Cin passed '
         'through. V: overflow for ADD/SUB/NEG. Z and N describe Y. Which flags get stored is up to the '
         'control unit.' % ops)
-
-    lines = ['name: ALU 16', 'description: "%s"' % description, 'nodes:']
-    wires = []
-    node_id = [0]
-
-    def node(text, x, y):
-        node_id[0] += 1
-        lines.append('  - {id: %d, %s, at: [%d, %d]}' % (node_id[0], text, x, y))
-        return node_id[0]
-
-    def bus(kind, label, width, x, y):
-        bus_node = node('kind: %s, label: %s, width: %d' % (kind, label, width), x, y)
-        return ['%d.%s%d' % (bus_node, label, i) for i in range(width)]
-
-    a = bus('Input', 'A', 16, 40, 300)
-    b = bus('Input', 'B', 16, 40, 900)
-    op = bus('Input', 'OP', 4, 40, 1500)
-    cin = node('kind: Input, label: Cin', 40, 2100)
-    low, high = node('kind: Low', 380, 40), node('kind: High', 380, 140)
-
-    address_names = ['A0', 'A1', 'A2', 'A3', 'B0', 'B1', 'B2', 'B3', 'OP0', 'OP1', 'OP2', 'OP3', 'Cin', 'SIN', 'P0', 'P1']
-    data_names = ['Y0', 'Y1', 'Y2', 'Y3', 'Cout', 'ZERO', 'V', 'NC']
-    slices = []
-    for k in range(4):
-        node_id[0] += 1
-        slices.append(node_id[0])
-        lines += ['  - id: %d' % node_id[0], '    kind: ROM', '    at: [%d, %d]' % (560, 300 + 900 * k),
-                  '    address: 16', '    data: 8', '    inputs: [%s]' % ', '.join(address_names),
-                  '    outputs: [%s]' % ', '.join(data_names), '    image: ALU Slice.bin']
-    zero_low, zero_high, zero = (node('kind: And', 900, y) for y in (900, 2700, 1800))
-    outputs = bus('Output', 'Y', 16, 1200, 300)
-    flag = {name: node('kind: Output, label: %s' % name, 1200, 1700 + 100 * i)
-            for i, name in enumerate(['Z', 'N', 'C', 'V'])}
-
-    for k, rom in enumerate(slices):
-        # Each slice takes a nibble of A, B and Y, and all of OP: bus wires.
-        wires.append('%s..A%d -> %d.A0..A3' % (a[4 * k], 4 * k + 3, rom))
-        wires.append('%s..B%d -> %d.B0..B3' % (b[4 * k], 4 * k + 3, rom))
-        wires.append('%d.Y0..Y3 -> %s..Y%d' % (rom, outputs[4 * k], 4 * k + 3))
-        wires.append('%s -> %d.OP0..OP3' % (op[0].split('.')[0], rom))
-        wires.append('%d -> %d.Cin' % (cin, rom) if k == 0 else '%d.Cout -> %d.Cin' % (slices[k - 1], rom))
-        wires.append('%s -> %d.SIN' % (a[4 * k + 4] if k < 3 else low, rom))
-        wires.append('%d -> %d.P0' % (high if k & 1 else low, rom))
-        wires.append('%d -> %d.P1' % (high if k & 2 else low, rom))
-        wires.append('%d -> %d./CE' % (low, rom))
-        wires.append('%d -> %d./OE' % (low, rom))
-    wires += ['%d.ZERO -> %d.A' % (slices[0], zero_low), '%d.ZERO -> %d.B' % (slices[1], zero_low),
-              '%d.ZERO -> %d.A' % (slices[2], zero_high), '%d.ZERO -> %d.B' % (slices[3], zero_high),
-              '%d.Y -> %d.A' % (zero_low, zero), '%d.Y -> %d.B' % (zero_high, zero),
-              '%d.Y -> %d' % (zero, flag['Z']), '%d.Y3 -> %d' % (slices[3], flag['N']),
-              '%d.Cout -> %d' % (slices[3], flag['C']), '%d.V -> %d' % (slices[3], flag['V'])]
-
-    lines.append('wires:')
-    lines += ['  - ' + wire for wire in wires]
-    with open(os.path.join(COMPONENTS, 'ALU 16.yaml'), 'w', newline='\n') as file:
-        file.write('\n'.join(lines) + '\n')
+    with component('ALU 16', description):
+        A, B, OP = bus_input('A', 16), bus_input('B', 16), bus_input('OP', 4)
+        carry = inputs('Cin')
+        address = ['A0', 'A1', 'A2', 'A3', 'B0', 'B1', 'B2', 'B3', 'OP0', 'OP1', 'OP2', 'OP3', 'Cin', 'SIN', 'P0', 'P1']
+        data = ['Y0', 'Y1', 'Y2', 'Y3', 'Cout', 'ZERO', 'V', 'NC']
+        slices, Y = [], Bus()
+        for k in range(4):
+            chip = rom(address, data, image='ALU Slice.bin')
+            A[4 * k:4 * k + 4] >> chip.A
+            B[4 * k:4 * k + 4] >> chip.B
+            OP >> chip.OP
+            carry >> chip.Cin  # carries ripple up from slice to slice
+            carry = chip.Cout
+            (A[4 * k + 4] if k < 3 else low()) >> chip.SIN  # bit 0 of the slice above
+            bus(high() if k & 1 else low(), high() if k & 2 else low()) >> chip.P  # the slice's position
+            slices.append(chip)
+            Y += chip.Y
+        output('Y', Y)
+        output('Z', (slices[0].ZERO & slices[1].ZERO) & (slices[2].ZERO & slices[3].ZERO))
+        output('N', Y[15])
+        output('C', carry)
+        output('V', slices[3].V)
 
 
 if __name__ == '__main__':
