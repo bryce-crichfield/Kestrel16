@@ -33,6 +33,7 @@ Dependencies point downward only. Nothing in `KestrelCore` knows about the assem
 | `Source/Emulator/` | `KestrelEmulator` | The console as a `Terminal`, the CLI, tracing |
 | `Source/Simulator/` | `KestrelSimulator` | The circuit model, YAML files, the gate simulation, the editor, the self-test and hardware check |
 | `Tools/` | (Python) | Generates the hardware components and microcode ROMs into `Components/` |
+| `Tools/eda/` | (Python, target `kicad`) | `Components/` → KiCad schematic → placed and routed board → Gerbers ([its README](Tools/eda/README.md)) |
 | `Programs/` | (CMake) | Example and test programs, built into `Binary/Programs/` |
 | `Tests/` | (CMake) | Test helpers |
 

@@ -17,7 +17,6 @@ flattened source netlist. It also runs KiCad's electrical rules check.
 """
 import argparse
 import copy
-import glob
 import json
 import os
 import subprocess
@@ -27,6 +26,7 @@ import uuid
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from kicad_env import find_kicad, kicad_cli  # noqa: E402
 from netlist import Library, bits  # noqa: E402
 import sexpr  # noqa: E402
 from sexpr import Sym, find, find_all  # noqa: E402
@@ -50,17 +50,6 @@ def kicad_name(name):
 
 def snap(value):
     return round(value / GRID) * GRID
-
-
-def find_kicad(relative):
-    patterns = [os.path.join(os.environ.get('ProgramFiles', 'C:/Program Files'), 'KiCad', '*', relative),
-                os.path.join('/usr/share/kicad', relative.replace('share/kicad/', '')),
-                os.path.join('/Applications/KiCad/KiCad.app/Contents', relative)]
-    for pattern in patterns:
-        found = sorted(glob.glob(pattern))
-        if found:
-            return found[-1]
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -356,12 +345,22 @@ class Sheet:
                 holder = self.place(Placed(first.symbol, power_unit, self.take_cell(), package, first.value, first.footprint))
             for net, number in power.items():
                 self.attach(('power', net), *holder.pin_point(number))
+            if power:  # its decoupling cap; the placer puts one beside each chip's VCC pin
+                self.capacitor(('C', package), 'Device:C', '100nF', 'Capacitor_THT:C_Disc_D3.0mm_W1.6mm_P2.50mm')
 
-        if self.top:  # tell ERC that something supplies VCC and GND
+        if self.top:  # one bulk cap where power comes in, and tell ERC that something supplies VCC and GND
+            self.capacitor(('C', 'bulk'), 'Device:C_Polarized', '10uF',
+                           'Capacitor_THT:CP_Radial_D5.0mm_P2.00mm')
             for net in ('VCC', 'GND'):
                 point = self.take_cell()
                 self.place(Placed(self.project.symbols.get('power:PWR_FLAG'), 1, point, ('#FLG', net), 'PWR_FLAG'))
                 self.attach(('power', net), point, 90)
+
+    def capacitor(self, package, lib_id, value, footprint):
+        """A cap from VCC (pin 1) to GND (pin 2), below the drawing."""
+        placed = self.place(Placed(self.project.symbols.get(lib_id), 1, self.take_cell(), package, value, footprint))
+        self.attach(('power', 'VCC'), *placed.pin_point(1))
+        self.attach(('power', 'GND'), *placed.pin_point(2))
 
     def headers(self):
         """The top component's ports, inputs then outputs, on 40-pin headers right of the drawing."""
@@ -465,7 +464,8 @@ class Project:
             for placed in sheet.placed:
                 reference = self.references[(name, path, placed.package)]
                 for number, (node_id, pin) in placed.logical.items():
-                    self.pin_map['%s:%s' % (reference, number)] =                         ['port', pin] if node_id == 'port' else [list(ids), node_id, pin]
+                    self.pin_map['%s:%s' % (reference, number)] = \
+                        ['port', pin] if node_id == 'port' else [list(ids), node_id, pin]
 
     def write(self, directory):
         os.makedirs(directory, exist_ok=True)
@@ -606,10 +606,10 @@ def read_kicad_netlist(path, pin_map):
     return result
 
 
-def check(project, directory, kicad_cli):
+def check(project, directory, cli):
     top = os.path.join(directory, project.name + '.kicad_sch')
     netlist_path = os.path.join(directory, project.name + '.net')
-    subprocess.run([kicad_cli, 'sch', 'export', 'netlist', '--format', 'kicadsexpr', '-o', netlist_path, top],
+    subprocess.run([cli, 'sch', 'export', 'netlist', '--format', 'kicadsexpr', '-o', netlist_path, top],
                    check=True, capture_output=True)
     exported = read_kicad_netlist(netlist_path, project.pin_map)
     source = flatten(project.library, project.name)
@@ -626,7 +626,7 @@ def check(project, directory, kicad_cli):
                                          '%d nets differ' % (len(missing) + len(extra))))
 
     report = os.path.join(directory, project.name + '.erc.json')
-    subprocess.run([kicad_cli, 'sch', 'erc', '--format', 'json', '--severity-all', '-o', report, top],
+    subprocess.run([cli, 'sch', 'erc', '--format', 'json', '--severity-all', '-o', report, top],
                    capture_output=True)
     counts = {}
     with open(report, encoding='utf-8') as file:
@@ -665,8 +665,7 @@ def main():
                                               sum(1 for (_, _, package), ref in project.references.items()
                                                   if not ref.startswith('#')), os.path.abspath(directory)))
     if args.check:
-        kicad_cli = args.kicad_cli or find_kicad('bin/kicad-cli.exe') or find_kicad('bin/kicad-cli') or 'kicad-cli'
-        if not check(project, directory, kicad_cli):
+        if not check(project, directory, args.kicad_cli or kicad_cli()):
             sys.exit(1)
 
 
