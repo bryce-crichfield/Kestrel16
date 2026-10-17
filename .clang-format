@@ -1,0 +1,4 @@
+BasedOnStyle: Chromium
+ColumnLimit: 0
+IndentWidth: 4
+ContinuationIndentWidth: 4
