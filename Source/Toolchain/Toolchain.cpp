@@ -9,7 +9,7 @@
 
 namespace Kestrel {
 
-bool BuildProgram(const std::string& path, std::vector<uint8_t>& image, FILE* diagnostics) {
+bool BuildProgram(const std::string& path, std::vector<uint8_t>& image, FILE* diagnostics, const AssemblyEdit& editAssembly) {
     size_t dot = path.rfind('.');
     std::string extension = dot == std::string::npos ? "" : path.substr(dot);
     if (extension != ".c" && extension != ".s" && extension != ".bin") {
@@ -41,6 +41,9 @@ bool BuildProgram(const std::string& path, std::vector<uint8_t>& image, FILE* di
         }
         text = compiled.output;
         assemblyName = ReplaceExtension(path, ".s");
+    }
+    if (editAssembly) {
+        editAssembly(text, extension == ".c");
     }
     AssemblyResult assembled = Assemble(assemblyName, text);
     for (const std::string& error : assembled.errors) {

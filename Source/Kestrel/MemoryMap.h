@@ -26,6 +26,7 @@ KestrelAddress(ResetVector, 0x0000)          // PC after reset
     KestrelAddress(InterruptVector, 0x0002)  // where interrupts and TRAP go
     KestrelAddress(IoBase, 0xFC00)           // everything from here up is I/O
     KestrelAddress(StackTop, 0xFC00)         // where C programs start their stack (it grows down)
+    KestrelAddress(DumpArea, 0xFBE0)         // KestrelValidator's __dump writes the registers here, last thing
 #endif
 
 #ifdef KestrelIoBus

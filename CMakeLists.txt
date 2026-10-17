@@ -7,7 +7,8 @@ project(Kestrel16 LANGUAGES C CXX)
 #   Source/Compiler/     KestrelCompilerCore (Compile())    + Main.cpp -> Binary/KestrelCompiler
 #   Source/Toolchain/    KestrelToolchain: a .c, .s or .bin to a memory image, in-process
 #   Source/Emulator/     Main.cpp                                      -> Binary/KestrelEmulator
-#   Source/Simulator/    the circuit editor and gate-level simulator   -> Binary/KestrelSimulator
+#   Source/Simulator/    KestrelSimulatorCore (the gate-level simulation) + the editor -> Binary/KestrelSimulator
+#   Source/Validator/    emulator vs gate-level computer, same final state? -> Binary/KestrelValidator
 #   Programs/*.s         -> Binary/Programs/*.bin (assembled with our own assembler)
 #   Programs/*.c         -> Binary/Programs/*_c.bin (compiled, then assembled)
 #   Tools/make_*.py      -> Build/Components/*.yaml and *.bin: the hardware, generated at build time
@@ -18,6 +19,7 @@ project(Kestrel16 LANGUAGES C CXX)
 #                        cmake --build Build --target simulate_Fibonacci_c  (gate-level Kestrel16 Computer)
 # Any source, by hand:   Binary/KestrelEmulator --run Programs/Fibonacci.c
 #                        Binary/KestrelSimulator --run "Kestrel16 Computer" --program Programs/Fibonacci.c
+# Check the hardware:    Binary/KestrelValidator Programs/Fibonacci.c
 # Tests:                 ctest --test-dir Build
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -142,6 +144,7 @@ add_subdirectory(Source/Compiler)
 add_subdirectory(Source/Toolchain)
 add_subdirectory(Source/Emulator)
 add_subdirectory(Source/Simulator)
+add_subdirectory(Source/Validator)
 
 # ---------------------------------------------------------------------------
 # The hardware: Tools/make_*.py write the components (yaml netlists) and ROM images into
@@ -276,8 +279,7 @@ add_test(NAME simulator_self_test COMMAND KestrelSimulator --self-test)
 # The machine's components (ALU, ...) against the emulator.
 add_test(NAME hardware_check COMMAND KestrelSimulator --components ${COMPONENTS_DIR} --check-hardware)
 
-# What each program prints. The ones also listed in GATE_LEVEL_TESTS run on the gate-level
-# computer too, which has to print the same.
+# What each program prints (on the emulator; the validate_ tests below hold the hardware to it).
 set(EXPECTED_Fibonacci "46368.timer interrupts: 109")  # the hardware check runs it on the gate-level computer
 set(EXPECTED_Fibonacci_c "28657 46368")
 set(EXPECTED_Shifts_c "3EFE 1CA6")     # every shift amount, byte and word stores
@@ -290,16 +292,24 @@ if(EXISTS ${CMAKE_SOURCE_DIR}/Programs/Shell.c)
              -P ${CMAKE_SOURCE_DIR}/Tests/RunWithInput.cmake)
     set_tests_properties(program_Shell_c PROPERTIES PASS_REGULAR_EXPRESSION "42.*lertseK")
 endif()
-set(GATE_LEVEL_TESTS Fibonacci_c Shifts_c Interrupts IoBus)
 foreach(name Fibonacci Fibonacci_c Shifts_c Interrupts IoBus)
     if(TEST program_${name})
         set_tests_properties(program_${name} PROPERTIES PASS_REGULAR_EXPRESSION "${EXPECTED_${name}}")
     endif()
 endforeach()
-foreach(name ${GATE_LEVEL_TESTS})
-    if(TEST program_${name})
-        add_test(NAME simulate_${name} COMMAND KestrelSimulator --components ${COMPONENTS_DIR}
-                 --run "Kestrel16 Computer" --program ${PROGRAM_OUTPUT_DIR}/${name}.bin)
-        set_tests_properties(simulate_${name} PROPERTIES PASS_REGULAR_EXPRESSION "${EXPECTED_${name}}" TIMEOUT 600)
+
+# Differential tests: each program, built from source, has to end in the same state (memory,
+# output, and registers and flags for programs ending in __dump) on the gate-level computer as on
+# the emulator. See ValidatorDesign.md.
+foreach(source ${PROGRAM_SOURCES} ${C_PROGRAM_SOURCES})
+    get_filename_component(name ${source} NAME_WE)
+    get_filename_component(extension ${source} EXT)
+    if(extension STREQUAL ".c")
+        set(name ${name}_c)
     endif()
+    if(name STREQUAL "Shell_c")
+        continue()  # waits for typed commands; it never halts
+    endif()
+    add_test(NAME validate_${name} COMMAND KestrelValidator --components ${COMPONENTS_DIR} ${source})
+    set_tests_properties(validate_${name} PROPERTIES TIMEOUT 600)
 endforeach()

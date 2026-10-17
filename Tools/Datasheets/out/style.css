@@ -1,0 +1,46 @@
+@page {
+  size: Letter;
+  margin: 0.7in 0.6in 0.65in 0.6in;
+  @top-left  { content: string(hl); font: 700 8pt "DejaVu Sans"; color: #111; border-bottom: 1.2pt solid #111; vertical-align: bottom; padding-bottom: 4pt; }
+  @top-right { content: string(hr); font: 8pt "DejaVu Sans"; color: #555; border-bottom: 1.2pt solid #111; vertical-align: bottom; padding-bottom: 4pt; }
+  @bottom-right { content: "Page " counter(page) " of " counter(pages); font: 8pt "DejaVu Sans"; color: #555; }
+}
+.runhead { string-set: hl attr(data-left), hr attr(data-right); height: 0; }
+
+* { box-sizing: border-box; }
+body { font: 9.5pt/1.4 "DejaVu Sans", Helvetica, Arial, sans-serif; color: #111; margin: 0; }
+.mono, td.mono, th.mono { font-family: "DejaVu Sans Mono", Menlo, Consolas, monospace; font-size: 8.8pt; }
+
+header.title { display: flex; gap: 14pt; align-items: flex-start; padding-top: 14pt; margin-bottom: 10pt; }
+.nobr { white-space: nowrap; }
+header.title .id { font: 700 20pt "DejaVu Sans Mono", monospace; border: 2pt solid #111; padding: 4pt 8pt; line-height: 1; }
+h1 { font-size: 20pt; margin: 0 0 3pt; line-height: 1.1; }
+.summary { margin: 0; max-width: 46em; }
+
+h2 { font-size: 11.5pt; margin: 16pt 0 8pt; padding-bottom: 3pt; border-bottom: 1pt solid #111;
+     text-transform: uppercase; letter-spacing: .06em; break-after: avoid; }
+h2 span { display: inline-block; width: 18pt; }
+h3 { font-size: 9.5pt; margin: 10pt 0 5pt; break-after: avoid; }
+section.newpage { break-before: page; }
+section.newpage h2 { margin-top: 0; padding-top: 14pt; }
+
+table { border-collapse: collapse; width: 100%; break-inside: avoid; }
+table.grid th, table.grid td { border: .6pt solid #999; padding: 3pt 6pt; text-align: left; vertical-align: top; }
+table.grid thead th { background: #e9e9e9; border-color: #777; font-weight: 700; }
+table.grid tfoot td { font-weight: 700; border-top: 1.2pt solid #111; }
+table.center td, table.center th { text-align: center; }
+.num { text-align: right !important; font-variant-numeric: tabular-nums; }
+
+table.specs { margin: 4pt 0 4pt; }
+table.specs th, table.specs td { border-top: .6pt solid #999; border-bottom: .6pt solid #999; padding: 3pt 6pt; text-align: left; }
+table.specs th { font-weight: 700; width: 12%; color: #333; }
+table.specs td { width: 21%; }
+
+figure { margin: 6pt 0 10pt; text-align: center; break-inside: avoid; }
+figure svg { width: 100%; height: auto; }
+figure.pinout svg { width: 74%; }
+
+.tables { display: flex; gap: 18pt; }
+.truth { flex: 1; break-inside: avoid; }
+.legend { color: #555; font-size: 8pt; margin: 3pt 0 0; }
+sub { font-size: 70%; }

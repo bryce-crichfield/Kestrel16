@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ c.id }} {{ c.name }} — Datasheet</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="runhead" data-left="{{ c.id }} · {{ c.name }}" data-right="Datasheet · Rev {{ c.revision }}"></div>
+
+<header class="title">
+  <div class="id">{{ c.id }}</div>
+  <div>
+    <h1>{{ c.name }}</h1>
+    <p class="summary">{{ c.summary | signals }}</p>
+  </div>
+</header>
+
+<table class="specs">
+  {% for row in c.specs | batch(3) %}
+  <tr>{% for k, v in row %}<th>{{ k }}</th><td>{{ v }}</td>{% endfor %}</tr>
+  {% endfor %}
+</table>
+
+<section>
+  <h2><span>1</span>Pinout</h2>
+  <figure class="pinout">{{ pinout_svg | safe }}</figure>
+  <table class="grid">
+    <thead><tr><th>Pin</th><th>Dir</th><th>Width</th><th>Active</th><th>Function</th></tr></thead>
+    <tbody>
+    {% for p in c.pins %}
+    <tr><td class="mono">{{ p.name }}</td><td>{{ 'In' if p.dir == 'in' else 'Out' }}</td>
+        <td>{{ p.width or 1 }}</td><td>{{ 'Rising ↑' if p.clock else ('Low' if p.active == 'low' else 'High') }}</td>
+        <td>{{ p.desc }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="newpage">
+  <h2><span>2</span>Schematic</h2>
+  <figure class="schematic">{{ schematic_svg | safe }}</figure>
+</section>
+
+<section class="newpage">
+  <h2><span>3</span>Transition tables</h2>
+  <div class="tables">
+  {% for t in c.tables %}
+  <div class="truth">
+    <h3>{{ t.title }}</h3>
+    <table class="grid center">
+      <thead><tr>{% for h in t.columns %}<th class="mono">{{ h }}</th>{% endfor %}</tr></thead>
+      <tbody>{% for r in t.rows %}<tr>{% for v in r %}<td class="mono">{{ v }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+    </table>
+    <p class="legend">{{ t.legend }}</p>
+  </div>
+  {% endfor %}
+  </div>
+</section>
+
+<section>
+  <h2><span>4</span>Bill of materials</h2>
+  <table class="grid">
+    <thead><tr><th>Ref</th><th class="num">Qty</th><th>Part</th><th>Description</th><th>Package</th></tr></thead>
+    <tbody>{% for ref, qty, part, desc, pkg in c.bom %}
+    <tr><td class="mono">{{ ref }}</td><td class="num">{{ qty }}</td><td class="mono">{{ part }}</td><td>{{ desc }}</td><td>{{ pkg }}</td></tr>
+    {% endfor %}</tbody>
+    <tfoot><tr><td>Total</td><td class="num">{{ c.bom | sum(attribute=1) }}</td><td colspan="3"></td></tr></tfoot>
+  </table>
+</section>
+</body>
+</html>
