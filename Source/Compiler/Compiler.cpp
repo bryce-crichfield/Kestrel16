@@ -12,8 +12,7 @@ namespace Kestrel::Compiler {
 string sourceName;
 vector<string> warnings;
 
-void Fatal(int location, const char* format, ...)
-{
+void Fatal(int location, const char* format, ...) {
     int file = location / LocationLines;
     char message[1024];
     va_list args;
@@ -27,27 +26,27 @@ void Fatal(int location, const char* format, ...)
 namespace {
 
 // Clears what the last compile left and preprocesses text. Returns the preprocessed text.
-string Start(const string& name, const string& text, const CompileOptions& options)
-{
+string Start(const string& name, const string& text, const CompileOptions& options) {
     sourceName = name;
     warnings.clear();
     ResetPreprocessor();
     ResetParser();
     ResetCodeGenerator();
     includePaths = options.includePaths;
-    for (const auto& [macro, value] : options.defines) macros[macro].body = PPTokens(value);
+    for (const auto& [macro, value] : options.defines)
+        macros[macro].body = PPTokens(value);
 
     string preprocessed;
     Preprocess(sourceName, text, preprocessed, 0);
     return preprocessed;
 }
 
-string CompileText(const string& name, const string& text, const CompileOptions& options)
-{
+string CompileText(const string& name, const string& text, const CompileOptions& options) {
     tokens = Lex(Start(name, text, options));
     pos = 0;
     EnterScope();
-    while (Tok().kind != TokEof) TopLevel();
+    while (Tok().kind != TokEof)
+        TopLevel();
 
     auto mainIt = globalsByName.find("main");
     if (mainIt == globalsByName.end() || mainIt->second->type->kind != KindFunction || !mainIt->second->isDefined)
@@ -64,8 +63,7 @@ string CompileText(const string& name, const string& text, const CompileOptions&
 
 namespace Kestrel {
 
-CompileResult Compile(const std::string& sourceName, const std::string& text, const CompileOptions& options)
-{
+CompileResult Compile(const std::string& sourceName, const std::string& text, const CompileOptions& options) {
     CompileResult result;
     try {
         result.output = Compiler::CompileText(sourceName, text, options);
@@ -77,8 +75,7 @@ CompileResult Compile(const std::string& sourceName, const std::string& text, co
     return result;
 }
 
-CompileResult Preprocess(const std::string& sourceName, const std::string& text, const CompileOptions& options)
-{
+CompileResult Preprocess(const std::string& sourceName, const std::string& text, const CompileOptions& options) {
     CompileResult result;
     try {
         result.output = Compiler::Start(sourceName, text, options);

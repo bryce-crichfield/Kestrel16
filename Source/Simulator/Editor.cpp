@@ -16,8 +16,7 @@ namespace Kestrel {
 
 App app;
 
-void SetStatus(const char* format, ...)
-{
+void SetStatus(const char* format, ...) {
     char text[256];
     va_list arguments;
     va_start(arguments, format);
@@ -27,70 +26,76 @@ void SetStatus(const char* format, ...)
     app.statusUntil = GetTime() + 4.0;
 }
 
-void EnsureEditor(Component& component)
-{
+void EnsureEditor(Component& component) {
     if (!component.editor) {
         component.editor = ImNodes::EditorContextCreate();
-        for (Node& node : component.nodes) node.placement = Node::Placement::Grid;
+        for (Node& node : component.nodes)
+            node.placement = Node::Placement::Grid;
     }
 }
 
-void OpenComponent(Component* component)
-{
-    if (!component || component == app.current) return;
+void OpenComponent(Component* component) {
+    if (!component || component == app.current)
+        return;
     app.current = component;
     EnsureEditor(*component);
     app.hoveredNode = -1;
 }
 
-void NewComponent()
-{
+void NewComponent() {
     Component* component = CreateComponent(UniqueComponentName("Untitled"));
     OpenComponent(component);
     SetStatus("Created '%s'", component->name.c_str());
 }
 
-static void SaveAllWithStatus()
-{
+static void SaveAllWithStatus() {
     int failures = SaveAll();
-    if (failures) SetStatus("Couldn't save %d component(s) to %s", failures, componentsDirectory.c_str());
-    else SetStatus("Saved to %s", componentsDirectory.c_str());
+    if (failures)
+        SetStatus("Couldn't save %d component(s) to %s", failures, componentsDirectory.c_str());
+    else
+        SetStatus("Saved to %s", componentsDirectory.c_str());
 }
 
-void EnterSimulation()
-{
+void EnterSimulation() {
     PruneWires(*app.current);
     BuildSimulation(app.simulation, *app.current);
     app.simulation.running = false;
     app.mode = Mode::Simulate;
 }
 
-static void ToggleMode()
-{
-    if (app.mode == Mode::Edit) EnterSimulation();
-    else app.mode = Mode::Edit;
+static void ToggleMode() {
+    if (app.mode == Mode::Edit)
+        EnterSimulation();
+    else
+        app.mode = Mode::Edit;
 }
 
-static void DrawMenuBar()
-{
-    if (!ImGui::BeginMainMenuBar()) return;
+static void DrawMenuBar() {
+    if (!ImGui::BeginMainMenuBar())
+        return;
     bool editing = app.mode == Mode::Edit;
 
     if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("New component", "Ctrl+N", false, editing)) NewComponent();
-        if (ImGui::MenuItem("Save all", "Ctrl+S")) SaveAllWithStatus();
+        if (ImGui::MenuItem("New component", "Ctrl+N", false, editing))
+            NewComponent();
+        if (ImGui::MenuItem("Save all", "Ctrl+S"))
+            SaveAllWithStatus();
         ImGui::Separator();
-        if (ImGui::MenuItem("Quit")) app.quitRequested = true;
+        if (ImGui::MenuItem("Quit"))
+            app.quitRequested = true;
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Mode")) {
-        if (ImGui::MenuItem("Edit", "F5", editing)) app.mode = Mode::Edit;
-        if (ImGui::MenuItem("Simulate", "F5", !editing) && editing) EnterSimulation();
+        if (ImGui::MenuItem("Edit", "F5", editing))
+            app.mode = Mode::Edit;
+        if (ImGui::MenuItem("Simulate", "F5", !editing) && editing)
+            EnterSimulation();
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {
         ImGui::MenuItem("Minimap", nullptr, &app.showMiniMap);
-        if (ImGui::MenuItem("Reset zoom", "Ctrl+0")) ResetZoom(*app.current);
+        if (ImGui::MenuItem("Reset zoom", "Ctrl+0"))
+            ResetZoom(*app.current);
         ImGui::EndMenu();
     }
 
@@ -104,43 +109,50 @@ static void DrawMenuBar()
     ImGui::EndMainMenuBar();
 }
 
-static void DrawQuitDialog()
-{
+static void DrawQuitDialog() {
     if (app.quitRequested) {
         app.quitRequested = false;
-        if (AnyDirty()) ImGui::OpenPopup("Unsaved changes");
-        else app.quit = true;
+        if (AnyDirty())
+            ImGui::OpenPopup("Unsaved changes");
+        else
+            app.quit = true;
     }
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Unsaved changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("Some components have unsaved changes.");
         if (ImGui::Button("Save all and quit")) {
-            if (SaveAll() == 0) app.quit = true;
-            else SetStatus("Couldn't save everything; not quitting");
+            if (SaveAll() == 0)
+                app.quit = true;
+            else
+                SetStatus("Couldn't save everything; not quitting");
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Quit without saving")) app.quit = true;
+        if (ImGui::Button("Quit without saving"))
+            app.quit = true;
         ImGui::SameLine();
-        if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+        if (ImGui::Button("Cancel"))
+            ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 }
 
-static void HandleShortcuts()
-{
+static void HandleShortcuts() {
     ImGuiIO& io = ImGui::GetIO();
-    if (ImGui::IsKeyPressed(ImGuiKey_F5)) ToggleMode();
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) SaveAllWithStatus();
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_N, false) && app.mode == Mode::Edit) NewComponent();
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_0, false)) ResetZoom(*app.current);
+    if (ImGui::IsKeyPressed(ImGuiKey_F5))
+        ToggleMode();
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false))
+        SaveAllWithStatus();
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_N, false) && app.mode == Mode::Edit)
+        NewComponent();
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_0, false))
+        ResetZoom(*app.current);
     if (app.mode == Mode::Simulate && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space, false))
         app.simulation.running = !app.simulation.running;
 }
 
 // Advances the clock in real time while running, without stalling the UI.
-static void RunClock(float frameSeconds)
-{
+static void RunClock(float frameSeconds) {
     Simulation& simulation = app.simulation;
     if (app.mode != Mode::Simulate || !simulation.running) {
         simulation.pendingHalfCycles = 0;
@@ -155,8 +167,7 @@ static void RunClock(float frameSeconds)
     simulation.pendingHalfCycles = std::min(simulation.pendingHalfCycles, 2.0);  // drop what we can't keep up with
 }
 
-static void DrawFrame()
-{
+static void DrawFrame() {
     float width = static_cast<float>(GetScreenWidth());
     float height = static_cast<float>(GetScreenHeight());
 
@@ -192,11 +203,12 @@ static void DrawFrame()
     HandleShortcuts();
 }
 
-int RunEditor(const char* screenshotPath, bool simulateOnStart)
-{
+int RunEditor(const char* screenshotPath, bool simulateOnStart) {
     std::vector<std::string> problems = LoadLibrary();
-    for (const std::string& problem : problems) fprintf(stderr, "%s\n", problem.c_str());
-    if (library.empty()) CreateComponent("Untitled");
+    for (const std::string& problem : problems)
+        fprintf(stderr, "%s\n", problem.c_str());
+    if (library.empty())
+        CreateComponent("Untitled");
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT);
     InitWindow(1440, 880, "Kestrel16 Circuit Workbench");
@@ -212,15 +224,19 @@ int RunEditor(const char* screenshotPath, bool simulateOnStart)
     app.simulation.randomRam = true;
 
     std::vector<Component*> sorted;
-    for (auto& component : library) sorted.push_back(component.get());
+    for (auto& component : library)
+        sorted.push_back(component.get());
     std::sort(sorted.begin(), sorted.end(), [](Component* a, Component* b) { return a->name < b->name; });
     OpenComponent(sorted.front());
-    if (!problems.empty()) SetStatus("%s", problems.front().c_str());
-    if (simulateOnStart) EnterSimulation();
+    if (!problems.empty())
+        SetStatus("%s", problems.front().c_str());
+    if (simulateOnStart)
+        EnterSimulation();
 
     int frame = 0;
     while (!app.quit) {
-        if (WindowShouldClose()) app.quitRequested = true;
+        if (WindowShouldClose())
+            app.quitRequested = true;
         RunClock(GetFrameTime());
 
         BeginDrawing();
@@ -237,7 +253,8 @@ int RunEditor(const char* screenshotPath, bool simulateOnStart)
     }
 
     for (auto& component : library)
-        if (component->editor) ImNodes::EditorContextFree(component->editor);
+        if (component->editor)
+            ImNodes::EditorContextFree(component->editor);
     ImNodes::DestroyContext();
     rlImGuiShutdown();
     CloseWindow();

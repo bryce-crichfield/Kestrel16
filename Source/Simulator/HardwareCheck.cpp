@@ -3,8 +3,8 @@
 #include "Checks.h"
 #include "Circuit.h"
 #include "ComponentFile.h"
-#include "Simulation.h"
 #include "Kestrel/Alu.h"
+#include "Simulation.h"
 
 #include <algorithm>
 #include <chrono>
@@ -20,32 +20,44 @@ struct AluResult {
 
 // The ALU 16 operations, as the emulator computes them (Source/Kestrel/Alu.h). Carry in starts out
 // in C, which the logic operations leave alone, as the hardware passes it through.
-static AluResult ReferenceAlu(int op, uint16_t a, uint16_t b, int carryIn)
-{
+static AluResult ReferenceAlu(int op, uint16_t a, uint16_t b, int carryIn) {
     uint8_t flags = carryIn ? Flag::Carry : 0;
     auto result = [&](uint16_t y) { return AluResult{y, (flags & Flag::Carry) ? 1 : 0, (flags & Flag::Overflow) ? 1 : 0}; };
     switch (static_cast<AluOperation>(op)) {
-    case AluOperation::Add:   return result(AluAdd(a, b, carryIn, flags));
-    case AluOperation::Sub:   return result(AluSubtract(a, b, carryIn, flags));
-    case AluOperation::And:   return result(AluLogic(a & b, flags));
-    case AluOperation::Or:    return result(AluLogic(a | b, flags));
-    case AluOperation::Xor:   return result(AluLogic(a ^ b, flags));
-    // Shifts move one bit; the control unit repeats them (b & 15) times.
-    case AluOperation::Shl:   return result(AluShift(ShiftKind::Left, a, 1, flags));
-    case AluOperation::Shr:   return result(AluShift(ShiftKind::RightLogical, a, 1, flags));
-    case AluOperation::Sar:   return result(AluShift(ShiftKind::RightArithmetic, a, 1, flags));
-    case AluOperation::Not:   return result(AluLogic(static_cast<uint16_t>(~a), flags));
-    case AluOperation::Neg:   return result(AluSubtract(0, a, carryIn, flags));
-    case AluOperation::PassB: return {b, carryIn, 0};
-    case AluOperation::Sxb:   return {SignExtendByte(a), -1, 0};  // C: don't care
-    default:                  return {a, carryIn, 0};             // PassA, and 13-15
+        case AluOperation::Add:
+            return result(AluAdd(a, b, carryIn, flags));
+        case AluOperation::Sub:
+            return result(AluSubtract(a, b, carryIn, flags));
+        case AluOperation::And:
+            return result(AluLogic(a & b, flags));
+        case AluOperation::Or:
+            return result(AluLogic(a | b, flags));
+        case AluOperation::Xor:
+            return result(AluLogic(a ^ b, flags));
+        // Shifts move one bit; the control unit repeats them (b & 15) times.
+        case AluOperation::Shl:
+            return result(AluShift(ShiftKind::Left, a, 1, flags));
+        case AluOperation::Shr:
+            return result(AluShift(ShiftKind::RightLogical, a, 1, flags));
+        case AluOperation::Sar:
+            return result(AluShift(ShiftKind::RightArithmetic, a, 1, flags));
+        case AluOperation::Not:
+            return result(AluLogic(static_cast<uint16_t>(~a), flags));
+        case AluOperation::Neg:
+            return result(AluSubtract(0, a, carryIn, flags));
+        case AluOperation::PassB:
+            return {b, carryIn, 0};
+        case AluOperation::Sxb:
+            return {SignExtendByte(a), -1, 0};  // C: don't care
+        default:
+            return {a, carryIn, 0};  // PassA, and 13-15
     }
 }
 
-int RunHardwareCheck()
-{
+int RunHardwareCheck() {
     std::vector<std::string> problems = LoadLibrary();
-    for (const std::string& problem : problems) printf("  %s\n", problem.c_str());
+    for (const std::string& problem : problems)
+        printf("  %s\n", problem.c_str());
     Check(problems.empty(), "the components load");
 
     if (Component* alu = FindComponent("ALU 16")) {
@@ -57,8 +69,10 @@ int RunHardwareCheck()
         std::vector<uint16_t> values = {0, 1, 2, 0x7F, 0x80, 0xFF, 0x100, 0x7FFF, 0x8000, 0x8001, 0xFFFE, 0xFFFF};
         uint32_t seed = 12345;
         auto random = [&] { return seed = seed * 1103515245u + 12345u, static_cast<uint16_t>(seed >> 8); };
-        for (int i = 0; i < 40; i++) values.push_back(random());
-        for (int shift = 0; shift < 16; shift++) values.push_back(static_cast<uint16_t>(0x9000 + shift));
+        for (int i = 0; i < 40; i++)
+            values.push_back(random());
+        for (int shift = 0; shift < 16; shift++)
+            values.push_back(static_cast<uint16_t>(0x9000 + shift));
 
         int failures = 0, vectors = 0, slowest = 0;
         for (int op = 0; op < 16; op++) {
@@ -96,8 +110,7 @@ int RunHardwareCheck()
         // A shift by n is n one-bit shifts, Y fed back to A, the last carry ending up in C.
         int shiftFailures = 0;
         const std::pair<AluOperation, ShiftKind> shifts[] = {
-            {AluOperation::Shl, ShiftKind::Left}, {AluOperation::Shr, ShiftKind::RightLogical},
-            {AluOperation::Sar, ShiftKind::RightArithmetic}};
+            {AluOperation::Shl, ShiftKind::Left}, {AluOperation::Shr, ShiftKind::RightLogical}, {AluOperation::Sar, ShiftKind::RightArithmetic}};
         for (auto [operation, kind] : shifts) {
             int op = static_cast<int>(operation);
             for (uint16_t value : values) {
@@ -146,9 +159,11 @@ int RunHardwareCheck()
             SetBus(simulation, *file, "WE", 1, enable);
             RecordSettle(simulation);
             clock();
-            if (enable) registers[r] = value;
+            if (enable)
+                registers[r] = value;
         };
-        for (int r = 0; r < 8; r++) write(r, random(), 1);
+        for (int r = 0; r < 8; r++)
+            write(r, random(), 1);
 
         int failures = 0;
         for (int i = 0; i < 2000; i++) {

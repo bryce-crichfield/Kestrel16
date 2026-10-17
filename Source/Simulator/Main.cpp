@@ -29,8 +29,7 @@
 
 using namespace Kestrel;
 
-static int Usage(const char* program, int status)
-{
+static int Usage(const char* program, int status) {
     fprintf(stderr,
             "usage: %s [--components DIR] [--self-test] [--check-hardware] [--screenshot FILE] [--simulate]\n"
             "       %s [--components DIR] --run COMPONENT [--program FILE] [--until PIN]... [--fail-on PIN]...\n"
@@ -46,19 +45,21 @@ static int Usage(const char* program, int status)
     return status;
 }
 
-int main(int argc, char** argv)
-{
+int main(int argc, char** argv) {
     const char* screenshotPath = nullptr;
     bool simulateOnStart = false;
     RunOptions run;
 
     for (int index = 1; index < argc; index++) {
         std::string argument = argv[index];
-        if (argument == "--self-test") return RunSelfTest();
-        if (argument == "--check-hardware") return RunHardwareCheck();
+        if (argument == "--self-test")
+            return RunSelfTest();
+        if (argument == "--check-hardware")
+            return RunHardwareCheck();
         if (argument == "--components" && index + 1 < argc) {
             componentsDirectory = argv[++index];
-            if (componentsDirectory.back() != '/' && componentsDirectory.back() != '\\') componentsDirectory += '/';
+            if (componentsDirectory.back() != '/' && componentsDirectory.back() != '\\')
+                componentsDirectory += '/';
         } else if (argument == "--screenshot" && index + 1 < argc) {
             screenshotPath = argv[++index];
         } else if (argument == "--simulate") {
@@ -84,7 +85,9 @@ int main(int argc, char** argv)
         }
     }
 
-    if (!run.component.empty()) return RunHeadless(run);
-    if (!run.program.empty() || !run.stopPins.empty() || !run.failPins.empty() || run.stats) return Usage(argv[0], 2);
+    if (!run.component.empty())
+        return RunHeadless(run);
+    if (!run.program.empty() || !run.stopPins.empty() || !run.failPins.empty() || run.stats)
+        return Usage(argv[0], 2);
     return RunEditor(screenshotPath, simulateOnStart);
 }
