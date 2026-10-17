@@ -2,9 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(Kestrel16 LANGUAGES C CXX)
 
 # Layout (Source/ is the include root: #include "Kestrel/Isa.h"):
-#   Source/Kestrel/      KestrelCore: the machine. Instructions.h, MemoryMap.h and AluOperations.h
-#                        define it as data (the Python generators in Tools/ read them too); Isa,
-#                        Alu, Machine (the reference implementation) and Disassembler build on them
+#   Source/Kestrel/      KestrelCore: the machine, shared by everything below
 #   Source/Assembler/    KestrelAssemblerCore (Assemble())  + Main.cpp -> Binary/KestrelAssembler
 #   Source/Compiler/     KestrelCompilerCore (Compile())    + Main.cpp -> Binary/KestrelCompiler
 #   Source/Toolchain/    KestrelToolchain: a .c, .s or .bin to a memory image, in-process
@@ -135,65 +133,15 @@ if(MINGW)
 endif()
 
 # ---------------------------------------------------------------------------
-# Libraries: each tool is a library with a thin main, so the others can use it in-process.
-add_library(KestrelCore STATIC
-    Source/Kestrel/Alu.cpp
-    Source/Kestrel/Disassembler.cpp
-    Source/Kestrel/Files.cpp
-    Source/Kestrel/Isa.cpp
-    Source/Kestrel/Machine.cpp
-)
-target_include_directories(KestrelCore PUBLIC ${CMAKE_SOURCE_DIR}/Source)
-target_link_libraries(KestrelCore PUBLIC Kestrel16Build)
-
-add_library(KestrelAssemblerCore STATIC Source/Assembler/Assembler.cpp)
-target_link_libraries(KestrelAssemblerCore PUBLIC KestrelCore)
-
-add_library(KestrelCompilerCore STATIC
-    Source/Compiler/Generator.cpp
-    Source/Compiler/Compiler.cpp
-    Source/Compiler/Expressions.cpp
-    Source/Compiler/Lexer.cpp
-    Source/Compiler/Parser.cpp
-    Source/Compiler/Preprocessor.cpp
-    Source/Compiler/Program.cpp
-    Source/Compiler/Types.cpp
-)
-target_link_libraries(KestrelCompilerCore PUBLIC KestrelCore)
-
-add_library(KestrelToolchain STATIC Source/Toolchain/Toolchain.cpp)
-target_link_libraries(KestrelToolchain PUBLIC KestrelAssemblerCore KestrelCompilerCore)
-
-# ---------------------------------------------------------------------------
-# Tools
-add_executable(KestrelAssembler Source/Assembler/Main.cpp)
-target_link_libraries(KestrelAssembler PRIVATE KestrelAssemblerCore)
-
-add_executable(KestrelCompiler Source/Compiler/Main.cpp)
-target_link_libraries(KestrelCompiler PRIVATE KestrelCompilerCore)
-
-add_executable(KestrelEmulator Source/Emulator/Main.cpp)
-target_link_libraries(KestrelEmulator PRIVATE KestrelToolchain)
-
-# Circuit editor and simulator. It loads components from Build/Components/, where the generators
-# below write them and the editor saves new ones. It's all build output, out of the source tree.
+# Components: each has its own CMakeLists.txt. Each tool is a library with a thin main, so the
+# others can use it in-process. Order matters only in that a library comes before its users.
 set(COMPONENTS_DIR ${CMAKE_SOURCE_DIR}/Build/Components)
-add_executable(KestrelSimulator
-    Source/Simulator/Circuit.cpp
-    Source/Simulator/ComponentFile.cpp
-    Source/Simulator/Editor.cpp
-    Source/Simulator/EditorCanvas.cpp
-    Source/Simulator/EditorMemory.cpp
-    Source/Simulator/EditorPanels.cpp
-    Source/Simulator/HardwareCheck.cpp
-    Source/Simulator/HeadlessRun.cpp
-    Source/Simulator/Main.cpp
-    Source/Simulator/SelfTest.cpp
-    Source/Simulator/Simulation.cpp
-)
-target_link_libraries(KestrelSimulator PRIVATE KestrelToolchain raylib rlimgui imnodes yaml-cpp::yaml-cpp)
-target_compile_definitions(KestrelSimulator PRIVATE
-    COMPONENTS_PATH="${COMPONENTS_DIR}/")
+add_subdirectory(Source/Kestrel)
+add_subdirectory(Source/Assembler)
+add_subdirectory(Source/Compiler)
+add_subdirectory(Source/Toolchain)
+add_subdirectory(Source/Emulator)
+add_subdirectory(Source/Simulator)
 
 # ---------------------------------------------------------------------------
 # The hardware: Tools/make_*.py write the components (yaml netlists) and ROM images into
