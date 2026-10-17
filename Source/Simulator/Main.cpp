@@ -52,42 +52,58 @@ int main(int argc, char** argv) {
 
     for (int index = 1; index < argc; index++) {
         std::string argument = argv[index];
-        if (argument == "--self-test")
+        if (argument == "--self-test") {
             return RunSelfTest();
-        if (argument == "--check-hardware")
+        }
+        if (argument == "--check-hardware") {
             return RunHardwareCheck();
+        }
         if (argument == "--components" && index + 1 < argc) {
             componentsDirectory = argv[++index];
-            if (componentsDirectory.back() != '/' && componentsDirectory.back() != '\\')
+            if (componentsDirectory.back() != '/' && componentsDirectory.back() != '\\') {
                 componentsDirectory += '/';
-        } else if (argument == "--screenshot" && index + 1 < argc) {
+            }
+        }
+        else if (argument == "--screenshot" && index + 1 < argc) {
             screenshotPath = argv[++index];
-        } else if (argument == "--simulate") {
+        }
+        else if (argument == "--simulate") {
             simulateOnStart = true;
-        } else if (argument == "--run" && index + 1 < argc) {
+        }
+        else if (argument == "--run" && index + 1 < argc) {
             run.component = argv[++index];
-        } else if (argument == "--program" && index + 1 < argc) {
+        }
+        else if (argument == "--program" && index + 1 < argc) {
             run.program = argv[++index];
-        } else if (argument == "--until" && index + 1 < argc) {
+        }
+        else if (argument == "--until" && index + 1 < argc) {
             run.stopPins.push_back(argv[++index]);
-        } else if (argument == "--fail-on" && index + 1 < argc) {
+        }
+        else if (argument == "--fail-on" && index + 1 < argc) {
             run.failPins.push_back(argv[++index]);
-        } else if (argument == "--max-cycles" && index + 1 < argc) {
+        }
+        else if (argument == "--max-cycles" && index + 1 < argc) {
             run.maxCycles = std::strtoull(argv[++index], nullptr, 0);
-        } else if (argument == "--hz" && index + 1 < argc) {
+        }
+        else if (argument == "--hz" && index + 1 < argc) {
             run.hz = std::strtod(argv[++index], nullptr);
-        } else if (argument == "--stats") {
+        }
+        else if (argument == "--stats") {
             run.stats = true;
-        } else if (argument == "--help" || argument == "-h") {
+        }
+        else if (argument == "--help" || argument == "-h") {
             return Usage(argv[0], 0);
-        } else {
+        }
+        else {
             return Usage(argv[0], 2);
         }
     }
 
-    if (!run.component.empty())
+    if (!run.component.empty()) {
         return RunHeadless(run);
-    if (!run.program.empty() || !run.stopPins.empty() || !run.failPins.empty() || run.stats)
+    }
+    if (!run.program.empty() || !run.stopPins.empty() || !run.failPins.empty() || run.stats) {
         return Usage(argv[0], 2);
+    }
     return RunEditor(screenshotPath, simulateOnStart);
 }

@@ -29,14 +29,16 @@ void SetStatus(const char* format, ...) {
 void EnsureEditor(Component& component) {
     if (!component.editor) {
         component.editor = ImNodes::EditorContextCreate();
-        for (Node& node : component.nodes)
+        for (Node& node : component.nodes) {
             node.placement = Node::Placement::Grid;
+        }
     }
 }
 
 void OpenComponent(Component* component) {
-    if (!component || component == app.current)
+    if (!component || component == app.current) {
         return;
+    }
     app.current = component;
     EnsureEditor(*component);
     app.hoveredNode = -1;
@@ -50,10 +52,12 @@ void NewComponent() {
 
 static void SaveAllWithStatus() {
     int failures = SaveAll();
-    if (failures)
+    if (failures) {
         SetStatus("Couldn't save %d component(s) to %s", failures, componentsDirectory.c_str());
-    else
+    }
+    else {
         SetStatus("Saved to %s", componentsDirectory.c_str());
+    }
 }
 
 void EnterSimulation() {
@@ -64,38 +68,47 @@ void EnterSimulation() {
 }
 
 static void ToggleMode() {
-    if (app.mode == Mode::Edit)
+    if (app.mode == Mode::Edit) {
         EnterSimulation();
-    else
+    }
+    else {
         app.mode = Mode::Edit;
+    }
 }
 
 static void DrawMenuBar() {
-    if (!ImGui::BeginMainMenuBar())
+    if (!ImGui::BeginMainMenuBar()) {
         return;
+    }
     bool editing = app.mode == Mode::Edit;
 
     if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("New component", "Ctrl+N", false, editing))
+        if (ImGui::MenuItem("New component", "Ctrl+N", false, editing)) {
             NewComponent();
-        if (ImGui::MenuItem("Save all", "Ctrl+S"))
+        }
+        if (ImGui::MenuItem("Save all", "Ctrl+S")) {
             SaveAllWithStatus();
+        }
         ImGui::Separator();
-        if (ImGui::MenuItem("Quit"))
+        if (ImGui::MenuItem("Quit")) {
             app.quitRequested = true;
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Mode")) {
-        if (ImGui::MenuItem("Edit", "F5", editing))
+        if (ImGui::MenuItem("Edit", "F5", editing)) {
             app.mode = Mode::Edit;
-        if (ImGui::MenuItem("Simulate", "F5", !editing) && editing)
+        }
+        if (ImGui::MenuItem("Simulate", "F5", !editing) && editing) {
             EnterSimulation();
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {
         ImGui::MenuItem("Minimap", nullptr, &app.showMiniMap);
-        if (ImGui::MenuItem("Reset zoom", "Ctrl+0"))
+        if (ImGui::MenuItem("Reset zoom", "Ctrl+0")) {
             ResetZoom(*app.current);
+        }
         ImGui::EndMenu();
     }
 
@@ -112,43 +125,54 @@ static void DrawMenuBar() {
 static void DrawQuitDialog() {
     if (app.quitRequested) {
         app.quitRequested = false;
-        if (AnyDirty())
+        if (AnyDirty()) {
             ImGui::OpenPopup("Unsaved changes");
-        else
+        }
+        else {
             app.quit = true;
+        }
     }
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Unsaved changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("Some components have unsaved changes.");
         if (ImGui::Button("Save all and quit")) {
-            if (SaveAll() == 0)
+            if (SaveAll() == 0) {
                 app.quit = true;
-            else
+            }
+            else {
                 SetStatus("Couldn't save everything; not quitting");
+            }
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Quit without saving"))
+        if (ImGui::Button("Quit without saving")) {
             app.quit = true;
+        }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel"))
+        if (ImGui::Button("Cancel")) {
             ImGui::CloseCurrentPopup();
+        }
         ImGui::EndPopup();
     }
 }
 
 static void HandleShortcuts() {
     ImGuiIO& io = ImGui::GetIO();
-    if (ImGui::IsKeyPressed(ImGuiKey_F5))
+    if (ImGui::IsKeyPressed(ImGuiKey_F5)) {
         ToggleMode();
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false))
+    }
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
         SaveAllWithStatus();
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_N, false) && app.mode == Mode::Edit)
+    }
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_N, false) && app.mode == Mode::Edit) {
         NewComponent();
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_0, false))
+    }
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_0, false)) {
         ResetZoom(*app.current);
-    if (app.mode == Mode::Simulate && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space, false))
+    }
+    if (app.mode == Mode::Simulate && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
         app.simulation.running = !app.simulation.running;
+    }
 }
 
 // Advances the clock in real time while running, without stalling the UI.
@@ -190,7 +214,8 @@ static void DrawFrame() {
         DrawProperties(ImVec2(width - propertiesWidth, top), ImVec2(propertiesWidth, bodyHeight));
         DrawSplitter("##palette splitter", paletteWidth, top, bodyHeight, app.paletteWidth, +1);
         DrawSplitter("##properties splitter", width - propertiesWidth, top, bodyHeight, app.propertiesWidth, -1);
-    } else {
+    }
+    else {
         clampWidth(app.simulationWidth, 0);
         float panelWidth = app.simulationWidth;
         DrawCanvas(ImVec2(0, top), ImVec2(width - panelWidth, bodyHeight));
@@ -205,10 +230,12 @@ static void DrawFrame() {
 
 int RunEditor(const char* screenshotPath, bool simulateOnStart) {
     std::vector<std::string> problems = LoadLibrary();
-    for (const std::string& problem : problems)
+    for (const std::string& problem : problems) {
         fprintf(stderr, "%s\n", problem.c_str());
-    if (library.empty())
+    }
+    if (library.empty()) {
         CreateComponent("Untitled");
+    }
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT);
     InitWindow(1440, 880, "Kestrel16 Circuit Workbench");
@@ -224,19 +251,23 @@ int RunEditor(const char* screenshotPath, bool simulateOnStart) {
     app.simulation.randomRam = true;
 
     std::vector<Component*> sorted;
-    for (auto& component : library)
+    for (auto& component : library) {
         sorted.push_back(component.get());
+    }
     std::sort(sorted.begin(), sorted.end(), [](Component* a, Component* b) { return a->name < b->name; });
     OpenComponent(sorted.front());
-    if (!problems.empty())
+    if (!problems.empty()) {
         SetStatus("%s", problems.front().c_str());
-    if (simulateOnStart)
+    }
+    if (simulateOnStart) {
         EnterSimulation();
+    }
 
     int frame = 0;
     while (!app.quit) {
-        if (WindowShouldClose())
+        if (WindowShouldClose()) {
             app.quitRequested = true;
+        }
         RunClock(GetFrameTime());
 
         BeginDrawing();
@@ -252,9 +283,11 @@ int RunEditor(const char* screenshotPath, bool simulateOnStart) {
         }
     }
 
-    for (auto& component : library)
-        if (component->editor)
+    for (auto& component : library) {
+        if (component->editor) {
             ImNodes::EditorContextFree(component->editor);
+        }
+    }
     ImNodes::DestroyContext();
     rlImGuiShutdown();
     CloseWindow();

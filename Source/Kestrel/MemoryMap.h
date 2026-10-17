@@ -22,36 +22,36 @@
 
 #ifdef KestrelAddress
 // KestrelAddress(Name, value)
-KestrelAddress(ResetVector, 0x0000)        // PC after reset
-KestrelAddress(InterruptVector, 0x0002)    // where interrupts and TRAP go
-KestrelAddress(IoBase, 0xFC00)             // everything from here up is I/O
-KestrelAddress(StackTop, 0xFC00)           // where C programs start their stack (it grows down)
+KestrelAddress(ResetVector, 0x0000)          // PC after reset
+    KestrelAddress(InterruptVector, 0x0002)  // where interrupts and TRAP go
+    KestrelAddress(IoBase, 0xFC00)           // everything from here up is I/O
+    KestrelAddress(StackTop, 0xFC00)         // where C programs start their stack (it grows down)
 #endif
 
 #ifdef KestrelIoBus
-// KestrelIoBus(Name, value): the shape of the I/O space
-KestrelIoBus(SlotSize, 0x80)               // bytes per slot (address lines A0-A6 on a slot)
-KestrelIoBus(SlotCount, 8)
+    // KestrelIoBus(Name, value): the shape of the I/O space
+    KestrelIoBus(SlotSize, 0x80)  // bytes per slot (address lines A0-A6 on a slot)
+    KestrelIoBus(SlotCount, 8)
 #endif
 
 #ifdef KestrelSlot
-// KestrelSlot(Name, number): which slot each device sits in; its interrupt is pending bit number
-KestrelSlot(System, 0)
-KestrelSlot(Uart, 1)
+    // KestrelSlot(Name, number): which slot each device sits in; its interrupt is pending bit number
+    KestrelSlot(System, 0)
+        KestrelSlot(Uart, 1)
 #endif
 
 #ifdef KestrelRegisterAddress
-// KestrelRegisterAddress(Name, address): the I/O registers
-KestrelRegisterAddress(InterruptPending, 0xFC00)
-KestrelRegisterAddress(InterruptMask, 0xFC02)
-KestrelRegisterAddress(TimerReload, 0xFC04)
-KestrelRegisterAddress(TimerAcknowledge, 0xFC06)
-KestrelRegisterAddress(UartData, 0xFC80)
-KestrelRegisterAddress(UartStatus, 0xFC82)
+    // KestrelRegisterAddress(Name, address): the I/O registers
+    KestrelRegisterAddress(InterruptPending, 0xFC00)
+        KestrelRegisterAddress(InterruptMask, 0xFC02)
+            KestrelRegisterAddress(TimerReload, 0xFC04)
+                KestrelRegisterAddress(TimerAcknowledge, 0xFC06)
+                    KestrelRegisterAddress(UartData, 0xFC80)
+                        KestrelRegisterAddress(UartStatus, 0xFC82)
 #endif
 
 #ifdef KestrelUartStatusBit
-// KestrelUartStatusBit(Name, bit)
-KestrelUartStatusBit(ReceiveReady, 0)
-KestrelUartStatusBit(TransmitReady, 1)
+    // KestrelUartStatusBit(Name, bit)
+    KestrelUartStatusBit(ReceiveReady, 0)
+        KestrelUartStatusBit(TransmitReady, 1)
 #endif

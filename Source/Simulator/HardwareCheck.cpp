@@ -56,8 +56,9 @@ static AluResult ReferenceAlu(int op, uint16_t a, uint16_t b, int carryIn) {
 
 int RunHardwareCheck() {
     std::vector<std::string> problems = LoadLibrary();
-    for (const std::string& problem : problems)
+    for (const std::string& problem : problems) {
         printf("  %s\n", problem.c_str());
+    }
     Check(problems.empty(), "the components load");
 
     if (Component* alu = FindComponent("ALU 16")) {
@@ -69,10 +70,12 @@ int RunHardwareCheck() {
         std::vector<uint16_t> values = {0, 1, 2, 0x7F, 0x80, 0xFF, 0x100, 0x7FFF, 0x8000, 0x8001, 0xFFFE, 0xFFFF};
         uint32_t seed = 12345;
         auto random = [&] { return seed = seed * 1103515245u + 12345u, static_cast<uint16_t>(seed >> 8); };
-        for (int i = 0; i < 40; i++)
+        for (int i = 0; i < 40; i++) {
             values.push_back(random());
-        for (int shift = 0; shift < 16; shift++)
+        }
+        for (int shift = 0; shift < 16; shift++) {
             values.push_back(static_cast<uint16_t>(0x9000 + shift));
+        }
 
         int failures = 0, vectors = 0, slowest = 0;
         for (int op = 0; op < 16; op++) {
@@ -95,10 +98,11 @@ int RunHardwareCheck() {
                         bool adder = operation == AluOperation::Add || operation == AluOperation::Sub || operation == AluOperation::Neg;
                         if (y != expected.y || (expected.carry >= 0 && carry != expected.carry) || (adder && overflow != expected.overflow) ||
                             zero != (expected.y == 0) || negative != (expected.y >> 15)) {
-                            if (failures++ < 10)
+                            if (failures++ < 10) {
                                 printf("  ALU op %d a=%04X b=%04X cin=%d: got Y=%04X C%d V%d Z%d N%d, want Y=%04X C%d V%d\n",
                                        op, a, b, carryIn, y, carry, overflow, zero, negative, expected.y,
                                        expected.carry, expected.overflow);
+                            }
                         }
                     }
                 }
@@ -127,14 +131,16 @@ int RunHardwareCheck() {
                     uint8_t flags = 0;
                     uint16_t want = AluShift(kind, value, static_cast<unsigned>(amount), flags);
                     int wantCarry = (flags & Flag::Carry) ? 1 : 0;
-                    if ((a != want || carry != wantCarry) && shiftFailures++ < 10)
+                    if ((a != want || carry != wantCarry) && shiftFailures++ < 10) {
                         printf("  shift op %d %04X by %d: got %04X C%d, want %04X C%d\n", op, value, amount, a,
                                carry, want, wantCarry);
+                    }
                 }
             }
         }
         Check(shiftFailures == 0, "repeated one-bit shifts match the emulator's shifts");
-    } else {
+    }
+    else {
         Check(false, "there is an ALU 16 component");
     }
 
@@ -159,11 +165,13 @@ int RunHardwareCheck() {
             SetBus(simulation, *file, "WE", 1, enable);
             RecordSettle(simulation);
             clock();
-            if (enable)
+            if (enable) {
                 registers[r] = value;
+            }
         };
-        for (int r = 0; r < 8; r++)
+        for (int r = 0; r < 8; r++) {
             write(r, random(), 1);
+        }
 
         int failures = 0;
         for (int i = 0; i < 2000; i++) {
@@ -173,12 +181,14 @@ int RunHardwareCheck() {
             SetBus(simulation, *file, "RB", 3, rb);
             RecordSettle(simulation);
             uint32_t qa = ReadBus(simulation, *file, "QA", 16), qb = ReadBus(simulation, *file, "QB", 16);
-            if ((qa != registers[ra] || qb != registers[rb]) && failures++ < 10)
+            if ((qa != registers[ra] || qb != registers[rb]) && failures++ < 10) {
                 printf("  R%d=%04X R%d=%04X: read %04X %04X\n", ra, registers[ra], rb, registers[rb], qa, qb);
+            }
         }
         Check(failures == 0, "Register File keeps R0-R7 like the emulator");
         Check(simulation.conflicts == 0, "Register File read ports never conflict");
-    } else {
+    }
+    else {
         Check(false, "there is a Register File component");
     }
 
@@ -207,7 +217,8 @@ int RunHardwareCheck() {
             "4181 6765 10946 17711 28657 46368\ntimer interrupts: 109\n";
         Check(!ReadOutput(simulation, *computer, "ILLEGAL"), "Kestrel16 Computer doesn't hit an illegal instruction");
         Check(simulation.console == Expected, "Kestrel16 Computer runs Fibonacci.bin like the emulator");
-    } else {
+    }
+    else {
         Check(false, "there is an Kestrel16 Computer component");
     }
 

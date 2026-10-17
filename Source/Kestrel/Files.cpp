@@ -9,12 +9,14 @@ namespace {
 template <typename Buffer>
 bool ReadAll(const std::string& path, Buffer& buffer) {
     FILE* file = fopen(path.c_str(), "rb");
-    if (!file)
+    if (!file) {
         return false;
+    }
     buffer.clear();
     char chunk[4096];
-    for (size_t count; (count = fread(chunk, 1, sizeof chunk, file)) > 0;)
+    for (size_t count; (count = fread(chunk, 1, sizeof chunk, file)) > 0;) {
         buffer.insert(buffer.end(), chunk, chunk + count);
+    }
     bool ok = !ferror(file);
     fclose(file);
     return ok;
@@ -22,8 +24,9 @@ bool ReadAll(const std::string& path, Buffer& buffer) {
 
 bool WriteAll(const std::string& path, const void* data, size_t size) {
     FILE* file = fopen(path.c_str(), "wb");
-    if (!file)
+    if (!file) {
         return false;
+    }
     bool ok = fwrite(data, 1, size, file) == size;
     return (fclose(file) == 0) && ok;
 }

@@ -24,22 +24,27 @@ int main(int argc, char** argv) {
 
     for (int index = 1; index < argc; index++) {
         const char* argument = argv[index];
-        if (!strcmp(argument, "-o") && index + 1 < argc)
+        if (!strcmp(argument, "-o") && index + 1 < argc) {
             outputPath = argv[++index];
-        else if (!strcmp(argument, "-l"))
+        }
+        else if (!strcmp(argument, "-l")) {
             listing = true;
+        }
         else if (argument[0] == '-' || !sourceName.empty()) {
             Usage(argv[0]);
             return 2;
-        } else
+        }
+        else {
             sourceName = argument;
+        }
     }
     if (sourceName.empty()) {
         Usage(argv[0]);
         return 2;
     }
-    if (outputPath.empty())
+    if (outputPath.empty()) {
         outputPath = Kestrel::ReplaceExtension(sourceName, ".bin");
+    }
 
     std::string source;
     if (!Kestrel::ReadFile(sourceName, source)) {
@@ -48,10 +53,12 @@ int main(int argc, char** argv) {
     }
 
     Kestrel::AssemblyResult result = Kestrel::Assemble(sourceName, source, listing);
-    if (listing)
+    if (listing) {
         fputs(result.listing.c_str(), stdout);
-    for (const std::string& error : result.errors)
+    }
+    for (const std::string& error : result.errors) {
         fprintf(stderr, "%s\n", error.c_str());
+    }
     if (!result.errors.empty()) {
         size_t count = result.errors.size();
         fprintf(stderr, "%zu error%s, no output written\n", count, count == 1 ? "" : "s");

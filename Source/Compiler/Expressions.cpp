@@ -13,18 +13,21 @@ static Node* CastExpression();
 
 void NeedScalar(Node* n, const char* what) {
     Type* t = Decay(n->type);
-    if (!IsScalar(t))
+    if (!IsScalar(t)) {
         Fatal(n->line, "invalid operand to %s", what);
+    }
 }
 
 void NeedInteger(Node* n, const char* what) {
-    if (!IsInteger(n->type))
+    if (!IsInteger(n->type)) {
         Fatal(n->line, "operand of %s must be an integer", what);
+    }
 }
 
 Node* MakeCast(Node* e, Type* t) {
-    if (t->kind == KindStruct || (e->type->kind == KindStruct && t->kind != KindVoid))
+    if (t->kind == KindStruct || (e->type->kind == KindStruct && t->kind != KindVoid)) {
         Fatal(e->line, "invalid cast involving a struct");
+    }
     Node* n = NewNode(NodeCast, e->line);
     n->a = e;
     n->type = t;
@@ -44,16 +47,19 @@ static Node* MakeBinary(NodeKind kind, Node* a, Node* b, int line, const char* w
 
 static int ElementSize(Type* pointer, int line) {
     Type* base = pointer->base;
-    if (base->kind == KindVoid || base->kind == KindFunction)
+    if (base->kind == KindVoid || base->kind == KindFunction) {
         return 1;
-    if (base->kind == KindStruct && !base->info->complete)
+    }
+    if (base->kind == KindStruct && !base->info->complete) {
         Fatal(line, "arithmetic on pointer to incomplete type");
+    }
     return base->size;
 }
 
 static Node* Scaled(Node* index, int size) {
-    if (size == 1)
+    if (size == 1) {
         return index;
+    }
     Node* m = NewNode(NodeMul, index->line);
     m->a = index;
     m->b = NewNumber(size, index->line);
@@ -64,8 +70,9 @@ static Node* Scaled(Node* index, int size) {
 static Node* MakeAdd(Node* a, Node* b, int line) {
     Type* ta = Decay(a->type);
     Type* tb = Decay(b->type);
-    if (IsInteger(ta) && IsInteger(tb))
+    if (IsInteger(ta) && IsInteger(tb)) {
         return MakeBinary(NodeAdd, a, b, line, "+");
+    }
     if (IsInteger(ta) && tb->kind == KindPointer) {
         std::swap(a, b);
         std::swap(ta, tb);
@@ -83,8 +90,9 @@ static Node* MakeAdd(Node* a, Node* b, int line) {
 static Node* MakeSub(Node* a, Node* b, int line) {
     Type* ta = Decay(a->type);
     Type* tb = Decay(b->type);
-    if (IsInteger(ta) && IsInteger(tb))
+    if (IsInteger(ta) && IsInteger(tb)) {
         return MakeBinary(NodeSub, a, b, line, "-");
+    }
     if (ta->kind == KindPointer && IsInteger(tb)) {
         Node* n = NewNode(NodeSub, line);
         n->a = a;
@@ -106,8 +114,9 @@ static Node* MakeSub(Node* a, Node* b, int line) {
 static Node* MakeCompare(NodeKind kind, Node* a, Node* b, int line, bool swap) {
     NeedScalar(a, "comparison");
     NeedScalar(b, "comparison");
-    if (swap)
+    if (swap) {
         std::swap(a, b);
+    }
     Node* n = NewNode(kind, line);
     n->a = a;
     n->b = b;
@@ -123,14 +132,18 @@ static bool IsLvalue(Node* n) {
 }
 
 Node* MakeAssign(Node* lhs, Node* rhs, int line) {
-    if (!IsLvalue(lhs))
+    if (!IsLvalue(lhs)) {
         Fatal(line, "left side of assignment is not assignable");
-    if (lhs->type->kind == KindArray || lhs->type->kind == KindFunction)
+    }
+    if (lhs->type->kind == KindArray || lhs->type->kind == KindFunction) {
         Fatal(line, "cannot assign to an array or function");
+    }
     if (lhs->type->kind == KindStruct) {
-        if (rhs->type != lhs->type)
+        if (rhs->type != lhs->type) {
             Fatal(line, "incompatible struct types in assignment");
-    } else {
+        }
+    }
+    else {
         NeedScalar(rhs, "assignment");
     }
     Node* n = NewNode(NodeAssign, line);
@@ -142,10 +155,12 @@ Node* MakeAssign(Node* lhs, Node* rhs, int line) {
 
 static Node* MakeDeref(Node* e, int line) {
     Type* t = Decay(e->type);
-    if (t->kind != KindPointer)
+    if (t->kind != KindPointer) {
         Fatal(line, "cannot dereference a non-pointer");
-    if (t->base->kind == KindVoid)
+    }
+    if (t->base->kind == KindVoid) {
         Fatal(line, "cannot dereference a void pointer");
+    }
     Node* n = NewNode(NodeDeref, line);
     n->a = e;
     n->type = t->base;
@@ -153,10 +168,12 @@ static Node* MakeDeref(Node* e, int line) {
 }
 
 static Node* MakeMember(Node* s, const string& name, int line) {
-    if (s->type->kind != KindStruct)
+    if (s->type->kind != KindStruct) {
         Fatal(line, "'.%s' used on something that is not a struct", name.c_str());
-    if (!s->type->info->complete)
+    }
+    if (!s->type->info->complete) {
         Fatal(line, "use of incomplete struct");
+    }
     for (Member& m : s->type->info->members) {
         if (m.name == name) {
             Node* n = NewNode(NodeMember, line);
@@ -170,8 +187,9 @@ static Node* MakeMember(Node* s, const string& name, int line) {
 }
 
 static Node* MakeIncDec(Node* e, int delta, bool isPost, int line) {
-    if (!IsLvalue(e))
+    if (!IsLvalue(e)) {
         Fatal(line, "operand of ++/-- is not assignable");
+    }
     NeedScalar(e, "++/--");
     Node* n = NewNode(NodeIncDec, line);
     n->a = e;
@@ -205,33 +223,41 @@ static Node* VarNode(Var* v, int line) {
 
 static Node* CallExpression(Node* fn, int line) {
     Type* ft = fn->type;
-    if (ft->kind == KindPointer && ft->base->kind == KindFunction)
+    if (ft->kind == KindPointer && ft->base->kind == KindFunction) {
         ft = ft->base;
-    if (ft->kind != KindFunction)
+    }
+    if (ft->kind != KindFunction) {
         Fatal(line, "called object is not a function");
+    }
     Node* n = NewNode(NodeCall, line);
     n->a = fn;
     n->type = ft->base;
-    if (n->type->kind == KindStruct)
+    if (n->type->kind == KindStruct) {
         Fatal(line, "returning structs by value is not supported (pass a pointer)");
+    }
     if (!Accept(")")) {
         do {
             Node* arg = Assignment();
             size_t index = n->list.size();
-            if (arg->type->kind == KindStruct)
+            if (arg->type->kind == KindStruct) {
                 Fatal(arg->line, "passing structs by value is not supported (pass a pointer)");
-            if (arg->type->kind == KindVoid)
+            }
+            if (arg->type->kind == KindVoid) {
                 Fatal(arg->line, "void value used as an argument");
-            if (!ft->oldStyle && index < ft->params.size())
+            }
+            if (!ft->oldStyle && index < ft->params.size()) {
                 arg = MakeCast(arg, ft->params[index]);
-            else if (!ft->oldStyle && !ft->variadic)
+            }
+            else if (!ft->oldStyle && !ft->variadic) {
                 Fatal(arg->line, "too many arguments in call");
+            }
             n->list.push_back(arg);
         } while (Accept(","));
         Expect(")");
     }
-    if (!ft->oldStyle && n->list.size() < ft->params.size())
+    if (!ft->oldStyle && n->list.size() < ft->params.size()) {
         Fatal(line, "too few arguments in call");
+    }
     return n;
 }
 
@@ -255,12 +281,14 @@ static Node* Primary() {
         pos++;
         Symbol* s = FindSymbol(t.text);
         if (!s || s->typedefType) {
-            if (!s && Is("("))
+            if (!s && Is("(")) {
                 Fatal(line, "call to undeclared function '%s' (declare a prototype first)", t.text.c_str());
+            }
             Fatal(line, "undeclared identifier '%s'", t.text.c_str());
         }
-        if (s->isEnumConstant)
+        if (s->isEnumConstant) {
             return NewNumber(s->enumValue, line);
+        }
         return VarNode(s->var, line);
     }
     Fatal(line, "expected an expression but found '%s'", t.text.c_str());
@@ -274,17 +302,23 @@ static Node* Postfix() {
             Node* index = Expression();
             Expect("]");
             e = MakeDeref(MakeAdd(e, index, line), line);
-        } else if (Accept("(")) {
+        }
+        else if (Accept("(")) {
             e = CallExpression(e, line);
-        } else if (Accept(".")) {
+        }
+        else if (Accept(".")) {
             e = MakeMember(e, ExpectIdent(), line);
-        } else if (Accept("->")) {
+        }
+        else if (Accept("->")) {
             e = MakeMember(MakeDeref(e, line), ExpectIdent(), line);
-        } else if (Accept("++")) {
+        }
+        else if (Accept("++")) {
             e = MakeIncDec(e, 1, true, line);
-        } else if (Accept("--")) {
+        }
+        else if (Accept("--")) {
             e = MakeIncDec(e, -1, true, line);
-        } else {
+        }
+        else {
             return e;
         }
     }
@@ -323,32 +357,39 @@ static Node* Unary() {
     }
     if (Accept("&")) {
         Node* e = CastExpression();
-        if (!IsLvalue(e))
+        if (!IsLvalue(e)) {
             Fatal(line, "cannot take the address of this expression");
+        }
         Node* n = NewNode(NodeAddr, line);
         n->a = e;
         n->type = PointerTo(e->type);
         return n;
     }
-    if (Accept("*"))
+    if (Accept("*")) {
         return MakeDeref(CastExpression(), line);
-    if (Accept("++"))
+    }
+    if (Accept("++")) {
         return MakeIncDec(Unary(), 1, false, line);
-    if (Accept("--"))
+    }
+    if (Accept("--")) {
         return MakeIncDec(Unary(), -1, false, line);
+    }
     if (Accept("sizeof")) {
         Type* t;
         if (Is("(") && IsTypeToken(TokAt(pos + 1))) {
             pos++;
             t = TypeName();
             Expect(")");
-        } else {
+        }
+        else {
             t = Unary()->type;
         }
-        if (t->kind == KindStruct && !t->info->complete)
+        if (t->kind == KindStruct && !t->info->complete) {
             Fatal(line, "sizeof of incomplete type");
-        if (t->kind == KindArray && t->length < 0)
+        }
+        if (t->kind == KindArray && t->length < 0) {
             Fatal(line, "sizeof of incomplete array");
+        }
         return NewNumber(t->size, line, TypeUInt);
     }
     return Postfix();
@@ -360,11 +401,13 @@ static Node* CastExpression() {
         pos++;
         Type* t = TypeName();
         Expect(")");
-        if (Is("{"))
+        if (Is("{")) {
             Fatal(line, "compound literals are not supported");
+        }
         Node* e = CastExpression();
-        if (t->kind != KindVoid)
+        if (t->kind != KindVoid) {
             NeedScalar(e, "cast");
+        }
         return MakeCast(e, t);
     }
     return Unary();
@@ -374,14 +417,18 @@ static Node* Multiplicative() {
     Node* e = CastExpression();
     for (;;) {
         int line = Tok().line;
-        if (Accept("*"))
+        if (Accept("*")) {
             e = MakeBinary(NodeMul, e, CastExpression(), line, "*");
-        else if (Accept("/"))
+        }
+        else if (Accept("/")) {
             e = MakeBinary(NodeDiv, e, CastExpression(), line, "/");
-        else if (Accept("%"))
+        }
+        else if (Accept("%")) {
             e = MakeBinary(NodeMod, e, CastExpression(), line, "%");
-        else
+        }
+        else {
             return e;
+        }
     }
 }
 
@@ -389,12 +436,15 @@ static Node* Additive() {
     Node* e = Multiplicative();
     for (;;) {
         int line = Tok().line;
-        if (Accept("+"))
+        if (Accept("+")) {
             e = MakeAdd(e, Multiplicative(), line);
-        else if (Accept("-"))
+        }
+        else if (Accept("-")) {
             e = MakeSub(e, Multiplicative(), line);
-        else
+        }
+        else {
             return e;
+        }
     }
 }
 
@@ -402,12 +452,15 @@ static Node* Shift() {
     Node* e = Additive();
     for (;;) {
         int line = Tok().line;
-        if (Accept("<<"))
+        if (Accept("<<")) {
             e = MakeBinary(NodeShl, e, Additive(), line, "<<");
-        else if (Accept(">>"))
+        }
+        else if (Accept(">>")) {
             e = MakeBinary(NodeShr, e, Additive(), line, ">>");
-        else
+        }
+        else {
             return e;
+        }
     }
 }
 
@@ -415,16 +468,21 @@ static Node* Relational() {
     Node* e = Shift();
     for (;;) {
         int line = Tok().line;
-        if (Accept("<"))
+        if (Accept("<")) {
             e = MakeCompare(NodeLt, e, Shift(), line, false);
-        else if (Accept("<="))
+        }
+        else if (Accept("<=")) {
             e = MakeCompare(NodeLe, e, Shift(), line, false);
-        else if (Accept(">"))
+        }
+        else if (Accept(">")) {
             e = MakeCompare(NodeLt, e, Shift(), line, true);
-        else if (Accept(">="))
+        }
+        else if (Accept(">=")) {
             e = MakeCompare(NodeLe, e, Shift(), line, true);
-        else
+        }
+        else {
             return e;
+        }
     }
 }
 
@@ -432,12 +490,15 @@ static Node* Equality() {
     Node* e = Relational();
     for (;;) {
         int line = Tok().line;
-        if (Accept("=="))
+        if (Accept("==")) {
             e = MakeCompare(NodeEq, e, Relational(), line, false);
-        else if (Accept("!="))
+        }
+        else if (Accept("!=")) {
             e = MakeCompare(NodeNe, e, Relational(), line, false);
-        else
+        }
+        else {
             return e;
+        }
     }
 }
 
@@ -503,8 +564,9 @@ static Node* LogicalOr() {
 
 Node* Conditional() {
     Node* cond = LogicalOr();
-    if (!Is("?"))
+    if (!Is("?")) {
         return cond;
+    }
     int line = Tok().line;
     pos++;
     NeedScalar(cond, "?:");
@@ -515,26 +577,33 @@ Node* Conditional() {
     n->c = Conditional();
     Type* tb = Decay(n->b->type);
     Type* tc = Decay(n->c->type);
-    if (IsInteger(tb) && IsInteger(tc))
+    if (IsInteger(tb) && IsInteger(tc)) {
         n->type = UsualArithmetic(tb, tc);
-    else if (tb->kind == KindPointer)
+    }
+    else if (tb->kind == KindPointer) {
         n->type = tb;
-    else if (tc->kind == KindPointer)
+    }
+    else if (tc->kind == KindPointer) {
         n->type = tc;
-    else if (tb->kind == KindStruct && tb == tc)
+    }
+    else if (tb->kind == KindStruct && tb == tc) {
         n->type = tb;
-    else if (tb->kind == KindVoid && tc->kind == KindVoid)
+    }
+    else if (tb->kind == KindVoid && tc->kind == KindVoid) {
         n->type = TypeVoid;
-    else
+    }
+    else {
         Fatal(line, "incompatible operands to ?:");
+    }
     return n;
 }
 
 Node* Assignment() {
     Node* lhs = Conditional();
     int line = Tok().line;
-    if (Accept("="))
+    if (Accept("=")) {
         return MakeAssign(lhs, Assignment(), line);
+    }
 
     static const struct {
         const char* text;
@@ -542,22 +611,26 @@ Node* Assignment() {
     } compound[] = {
         {"+=", NodeAdd}, {"-=", NodeSub}, {"*=", NodeMul}, {"/=", NodeDiv}, {"%=", NodeMod}, {"&=", NodeAnd}, {"|=", NodeOr}, {"^=", NodeXor}, {"<<=", NodeShl}, {">>=", NodeShr}};
     for (auto& c : compound) {
-        if (!Accept(c.text))
+        if (!Accept(c.text)) {
             continue;
+        }
         Node* rhs = Assignment();
-        if (!IsLvalue(lhs))
+        if (!IsLvalue(lhs)) {
             Fatal(line, "left side of '%s' is not assignable", c.text);
+        }
         Node* n = NewNode(NodeCompound, line);
         n->op = c.op;
         n->a = lhs;
         n->type = lhs->type;
         if (lhs->type->kind == KindPointer) {
-            if (c.op != NodeAdd && c.op != NodeSub)
+            if (c.op != NodeAdd && c.op != NodeSub) {
                 Fatal(line, "invalid '%s' on a pointer", c.text);
+            }
             NeedInteger(rhs, c.text);
             n->b = Scaled(rhs, ElementSize(lhs->type, line));
             n->opUnsigned = true;
-        } else {
+        }
+        else {
             NeedInteger(lhs, c.text);
             NeedInteger(rhs, c.text);
             n->b = rhs;
@@ -588,18 +661,21 @@ Node* Expression() {
 
 long long Wrap16(long long v, bool isUnsigned) {
     v &= 0xFFFF;
-    if (!isUnsigned && v >= 0x8000)
+    if (!isUnsigned && v >= 0x8000) {
         v -= 0x10000;
+    }
     return v;
 }
 
 static long long EvaluateAddress(Node* n, string* label) {
     switch (n->kind) {
         case NodeVar:
-            if (n->var->isLocal || !label)
+            if (n->var->isLocal || !label) {
                 Fatal(n->line, "not a constant expression");
-            if (!label->empty())
+            }
+            if (!label->empty()) {
                 Fatal(n->line, "constant expression refers to two addresses");
+            }
             *label = n->var->label;
             return n->value;
         case NodeMember:
@@ -633,8 +709,9 @@ long long Evaluate(Node* n, string* label) {
                 a &= 0xFFFF;
                 b &= 0xFFFF;
             }
-            if (b == 0)
+            if (b == 0) {
                 Fatal(n->line, "division by zero in constant expression");
+            }
             return Wrap16(n->kind == NodeDiv ? a / b : a % b, u);
         }
         case NodeAnd:
@@ -647,8 +724,9 @@ long long Evaluate(Node* n, string* label) {
             return Wrap16(Evaluate(n->a) << (Evaluate(n->b) & 15), u);
         case NodeShr: {
             long long a = Evaluate(n->a);
-            if (u)
+            if (u) {
                 a &= 0xFFFF;
+            }
             return Wrap16(a >> (Evaluate(n->b) & 15), u);
         }
         case NodeEq:
@@ -681,12 +759,15 @@ long long Evaluate(Node* n, string* label) {
         case NodeCast: {
             long long v = Evaluate(n->a, label);
             Type* t = n->type;
-            if (t->kind == KindBool)
+            if (t->kind == KindBool) {
                 return v != 0;
-            if (t->kind == KindChar)
+            }
+            if (t->kind == KindChar) {
                 return t->isUnsigned ? (v & 0xFF) : (signed char)(v & 0xFF);
-            if (label && !label->empty())
+            }
+            if (label && !label->empty()) {
                 return v;
+            }
             return Wrap16(v, t->isUnsigned);
         }
         case NodeAddr:
@@ -695,8 +776,9 @@ long long Evaluate(Node* n, string* label) {
         case NodeDeref:
         case NodeMember:
             // arrays and functions decay to their (constant) address
-            if (n->type->kind == KindArray || n->type->kind == KindFunction)
+            if (n->type->kind == KindArray || n->type->kind == KindFunction) {
                 return EvaluateAddress(n, label);
+            }
             Fatal(n->line, "not a constant expression");
         default:
             Fatal(n->line, "not a constant expression");

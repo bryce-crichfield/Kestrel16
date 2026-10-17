@@ -44,18 +44,22 @@ int AlignUp(int n, int a) {
 }
 
 Type* Decay(Type* t) {
-    if (t->kind == KindArray)
+    if (t->kind == KindArray) {
         return PointerTo(t->base);
-    if (t->kind == KindFunction)
+    }
+    if (t->kind == KindFunction) {
         return PointerTo(t);
+    }
     return t;
 }
 
 Type* Promote(Type* t) {
-    if (t->kind == KindInt)
+    if (t->kind == KindInt) {
         return t;
-    if (IsInteger(t))
+    }
+    if (IsInteger(t)) {
         return TypeInt;
+    }
     return t;
 }
 

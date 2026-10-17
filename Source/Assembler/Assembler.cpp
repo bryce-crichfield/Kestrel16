@@ -41,15 +41,17 @@ std::string Format(const char* format, va_list arguments) {
 }
 
 const char* SkipSpaces(const char* text) {
-    while (*text == ' ' || *text == '\t')
+    while (*text == ' ' || *text == '\t') {
         text++;
+    }
     return text;
 }
 
 void TrimRight(char* text) {
     size_t length = strlen(text);
-    while (length && isspace(static_cast<unsigned char>(text[length - 1])))
+    while (length && isspace(static_cast<unsigned char>(text[length - 1]))) {
         text[--length] = 0;
+    }
 }
 
 bool IsIdentifierStart(int character) {
@@ -62,8 +64,9 @@ bool IsIdentifierCharacter(int character) {
 
 bool EqualsIgnoringCase(const char* a, const char* b) {
     while (*a && *b) {
-        if (tolower(static_cast<unsigned char>(*a)) != tolower(static_cast<unsigned char>(*b)))
+        if (tolower(static_cast<unsigned char>(*a)) != tolower(static_cast<unsigned char>(*b))) {
             return false;
+        }
         a++;
         b++;
     }
@@ -74,11 +77,13 @@ bool EqualsIgnoringCase(const char* a, const char* b) {
 bool ReadIdentifier(const char** text, char* name) {
     const char* cursor = *text;
     int length = 0;
-    if (!IsIdentifierStart(static_cast<unsigned char>(*cursor)))
+    if (!IsIdentifierStart(static_cast<unsigned char>(*cursor))) {
         return false;
+    }
     while (IsIdentifierCharacter(static_cast<unsigned char>(*cursor))) {
-        if (length < MaxNameLength - 1)
+        if (length < MaxNameLength - 1) {
             name[length++] = *cursor;
+        }
         cursor++;
     }
     name[length] = 0;
@@ -91,13 +96,17 @@ void StripComment(char* line) {
     char quote = 0;
     for (; *line; line++) {
         if (quote) {
-            if (*line == '\\' && line[1])
+            if (*line == '\\' && line[1]) {
                 line++;
-            else if (*line == quote)
+            }
+            else if (*line == quote) {
                 quote = 0;
-        } else if (*line == '"' || *line == '\'') {
+            }
+        }
+        else if (*line == '"' || *line == '\'') {
             quote = *line;
-        } else if (*line == ';') {
+        }
+        else if (*line == ';') {
             *line = 0;
             return;
         }
@@ -105,37 +114,47 @@ void StripComment(char* line) {
 }
 
 int HexDigitValue(int character) {
-    if (isdigit(character))
+    if (isdigit(character)) {
         return character - '0';
+    }
     character = tolower(character);
-    if (character >= 'a' && character <= 'f')
+    if (character >= 'a' && character <= 'f') {
         return character - 'a' + 10;
+    }
     return -1;
 }
 
 int ParseRegister(const char* text) {
-    if ((text[0] == 'r' || text[0] == 'R') && text[1] >= '0' && text[1] <= '7' && text[2] == 0)
+    if ((text[0] == 'r' || text[0] == 'R') && text[1] >= '0' && text[1] <= '7' && text[2] == 0) {
         return text[1] - '0';
-    if (EqualsIgnoringCase(text, "sp"))
+    }
+    if (EqualsIgnoringCase(text, "sp")) {
         return StackPointer;
-    if (EqualsIgnoringCase(text, "lr"))
+    }
+    if (EqualsIgnoringCase(text, "lr")) {
         return LinkRegister;
+    }
     return -1;
 }
 
 const InstructionInfo* FindInstruction(const char* mnemonic) {
-    for (int index = 0; index < InstructionCount; index++)
-        if (!strcmp(Instructions[index].mnemonic, mnemonic))
+    for (int index = 0; index < InstructionCount; index++) {
+        if (!strcmp(Instructions[index].mnemonic, mnemonic)) {
             return &Instructions[index];
+        }
+    }
     return nullptr;
 }
 
 int FindBranchCondition(const char* mnemonic) {
-    if (mnemonic[0] != 'b')
+    if (mnemonic[0] != 'b') {
         return -1;
-    for (int index = 0; index < BranchCount; index++)
-        if (!strcmp(Branches[index].suffix, mnemonic + 1))
+    }
+    for (int index = 0; index < BranchCount; index++) {
+        if (!strcmp(Branches[index].suffix, mnemonic + 1)) {
             return static_cast<int>(Branches[index].condition);
+        }
+    }
     return -1;
 }
 
@@ -226,8 +245,9 @@ void Assembly::ReportError(const char* format, va_list arguments) {
 
 // Most problems are reported only in pass 2, so each appears exactly once.
 void Assembly::Error(const char* format, ...) {
-    if (pass != 2)
+    if (pass != 2) {
         return;
+    }
     va_list arguments;
     va_start(arguments, format);
     ReportError(format, arguments);
@@ -247,37 +267,45 @@ int Assembly::SplitOperands(char* text, char* operands[]) {
     int count = 0, depth = 0;
     char quote = 0, *start = text;
 
-    if (*SkipSpaces(text) == 0)
+    if (*SkipSpaces(text) == 0) {
         return 0;
+    }
 
     for (char* cursor = text;; cursor++) {
         char character = *cursor;
         if (quote && character) {
-            if (character == '\\' && cursor[1])
+            if (character == '\\' && cursor[1]) {
                 cursor++;
-            else if (character == quote)
+            }
+            else if (character == quote) {
                 quote = 0;
+            }
             continue;
         }
         if (character == '"' || character == '\'') {
             quote = character;
-        } else if (character == '(' || character == '[') {
+        }
+        else if (character == '(' || character == '[') {
             depth++;
-        } else if ((character == ')' || character == ']') && depth > 0) {
+        }
+        else if ((character == ')' || character == ']') && depth > 0) {
             depth--;
-        } else if (character == 0 || (character == ',' && depth == 0)) {
+        }
+        else if (character == 0 || (character == ',' && depth == 0)) {
             *cursor = 0;
             start = const_cast<char*>(SkipSpaces(start));
             TrimRight(start);
-            if (*start == 0)
+            if (*start == 0) {
                 Error("empty operand");
+            }
             if (count == MaxOperands) {
                 Error("too many operands");
                 return count;
             }
             operands[count++] = start;
-            if (character == 0)
+            if (character == 0) {
                 return count;
+            }
             start = cursor + 1;
         }
     }
@@ -296,9 +324,11 @@ int Assembly::ExpectRegister(const char* text) {
 }
 
 Symbol* Assembly::FindSymbol(const char* name) {
-    for (Symbol& symbol : symbols)
-        if (symbol.name == name)
+    for (Symbol& symbol : symbols) {
+        if (symbol.name == name) {
             return &symbol;
+        }
+    }
     return nullptr;
 }
 
@@ -323,10 +353,12 @@ void Assembly::DefineSymbol(const char* name, int value, bool isLabel) {
     }
 
     // Pass 2: only the definition pass 1 accepted gets updated.
-    if (!symbol || symbol->definedOnLine != lineNumber)
+    if (!symbol || symbol->definedOnLine != lineNumber) {
         return;
-    if (isLabel && symbol->value != value)
+    }
+    if (isLabel && symbol->value != value) {
         Error("internal error: label '%s' moved between passes (0x%04X -> 0x%04X)", name, symbol->value, value);
+    }
     symbol->value = value;
 }
 
@@ -393,8 +425,9 @@ int Assembly::ParseLiteralCharacter(const char** text) {
                 cursor++;
                 digits++;
             }
-            if (!digits)
+            if (!digits) {
                 Error("'\\x' needs one or two hex digits");
+            }
             *text = cursor;
             return value;
         }
@@ -419,25 +452,31 @@ int Assembly::ParseNumber(const char** text) {
     if (cursor[0] == '0' && (cursor[1] == 'x' || cursor[1] == 'X')) {
         base = 16;
         cursor += 2;
-    } else if (cursor[0] == '0' && (cursor[1] == 'b' || cursor[1] == 'B')) {
+    }
+    else if (cursor[0] == '0' && (cursor[1] == 'b' || cursor[1] == 'B')) {
         base = 2;
         cursor += 2;
     }
 
     for (;; cursor++) {
-        if (*cursor == '_')
+        if (*cursor == '_') {
             continue;  // allow 0b1010_0101
+        }
         int digit = HexDigitValue(static_cast<unsigned char>(*cursor));
-        if (digit < 0 || digit >= base)
+        if (digit < 0 || digit >= base) {
             break;
-        if (value < 0x1000000)
+        }
+        if (value < 0x1000000) {
             value = value * base + digit;
+        }
         digits++;
     }
-    if (!digits)
+    if (!digits) {
         Error("malformed number");
-    if (IsIdentifierCharacter(static_cast<unsigned char>(*cursor)))
+    }
+    if (IsIdentifierCharacter(static_cast<unsigned char>(*cursor))) {
         Error("malformed number (unexpected '%c')", *cursor);
+    }
     *text = cursor;
     return static_cast<int>(value);
 }
@@ -461,22 +500,30 @@ int Assembly::ParsePrimary(const char** text) {
         cursor++;
         value = ParseExpression(&cursor);
         ExpectClosingParenthesis(&cursor);
-    } else if (isdigit(static_cast<unsigned char>(*cursor))) {
+    }
+    else if (isdigit(static_cast<unsigned char>(*cursor))) {
         value = ParseNumber(&cursor);
-    } else if (*cursor == '\'') {
+    }
+    else if (*cursor == '\'') {
         cursor++;
-        if (*cursor == 0 || *cursor == '\'')
+        if (*cursor == 0 || *cursor == '\'') {
             Error("empty character literal");
-        else
+        }
+        else {
             value = ParseLiteralCharacter(&cursor);
-        if (*cursor == '\'')
+        }
+        if (*cursor == '\'') {
             cursor++;
-        else
+        }
+        else {
             Error("missing closing ' in character literal");
-    } else if (*cursor == '$') {
+        }
+    }
+    else if (*cursor == '$') {
         cursor++;
         value = statementAddress;
-    } else if (ReadIdentifier(&cursor, name)) {
+    }
+    else if (ReadIdentifier(&cursor, name)) {
         const char* after = SkipSpaces(cursor);
         bool isLow = EqualsIgnoringCase(name, "lo"), isHigh = EqualsIgnoringCase(name, "hi");
         if (*after == '(' && (isLow || isHigh)) {
@@ -484,19 +531,25 @@ int Assembly::ParsePrimary(const char** text) {
             value = ParseExpression(&cursor);
             ExpectClosingParenthesis(&cursor);
             value = isHigh ? (value >> 8) & 0xFF : value & 0xFF;
-        } else if (ParseRegister(name) >= 0) {
+        }
+        else if (ParseRegister(name) >= 0) {
             Error("register '%s' can't be used in an expression", name);
-        } else if (Symbol* symbol = FindSymbol(name)) {
+        }
+        else if (Symbol* symbol = FindSymbol(name)) {
             value = symbol->value;
-        } else {
+        }
+        else {
             expressionUnresolved = true;  // may be a forward reference in pass 1
             Error("undefined symbol '%s'", name);
         }
-    } else {
-        if (*cursor)
+    }
+    else {
+        if (*cursor) {
             Error("unexpected '%c' in expression", *cursor);
-        else
+        }
+        else {
             Error("missing value in expression");
+        }
         cursor += strlen(cursor);
     }
     *text = cursor;
@@ -526,19 +579,25 @@ int Assembly::ParseMultiplicative(const char** text) {
     for (;;) {
         const char* cursor = SkipSpaces(*text);
         char operation = *cursor;
-        if (operation != '*' && operation != '/' && operation != '%')
+        if (operation != '*' && operation != '/' && operation != '%') {
             return value;
+        }
         *text = cursor + 1;
         int right = ParseUnary(text);
-        if (operation == '*')
+        if (operation == '*') {
             value *= right;
+        }
         else if (right == 0) {
-            if (!expressionUnresolved)
+            if (!expressionUnresolved) {
                 Error("division by zero");
-        } else if (operation == '/')
+            }
+        }
+        else if (operation == '/') {
             value /= right;
-        else
+        }
+        else {
             value %= right;
+        }
     }
 }
 
@@ -549,11 +608,14 @@ int Assembly::ParseAdditive(const char** text) {
         if (*cursor == '+') {
             *text = cursor + 1;
             value += ParseMultiplicative(text);
-        } else if (*cursor == '-') {
+        }
+        else if (*cursor == '-') {
             *text = cursor + 1;
             value -= ParseMultiplicative(text);
-        } else
+        }
+        else {
             return value;
+        }
     }
 }
 
@@ -564,11 +626,14 @@ int Assembly::ParseShift(const char** text) {
         if (cursor[0] == '<' && cursor[1] == '<') {
             *text = cursor + 2;
             value <<= ParseAdditive(text) & 31;
-        } else if (cursor[0] == '>' && cursor[1] == '>') {
+        }
+        else if (cursor[0] == '>' && cursor[1] == '>') {
             *text = cursor + 2;
             value >>= ParseAdditive(text) & 31;
-        } else
+        }
+        else {
             return value;
+        }
     }
 }
 
@@ -576,8 +641,9 @@ int Assembly::ParseBitwiseAnd(const char** text) {
     int value = ParseShift(text);
     for (;;) {
         const char* cursor = SkipSpaces(*text);
-        if (*cursor != '&')
+        if (*cursor != '&') {
             return value;
+        }
         *text = cursor + 1;
         value &= ParseShift(text);
     }
@@ -587,8 +653,9 @@ int Assembly::ParseBitwiseXor(const char** text) {
     int value = ParseBitwiseAnd(text);
     for (;;) {
         const char* cursor = SkipSpaces(*text);
-        if (*cursor != '^')
+        if (*cursor != '^') {
             return value;
+        }
         *text = cursor + 1;
         value ^= ParseBitwiseAnd(text);
     }
@@ -598,8 +665,9 @@ int Assembly::ParseExpression(const char** text) {
     int value = ParseBitwiseXor(text);
     for (;;) {
         const char* cursor = SkipSpaces(*text);
-        if (*cursor != '|')
+        if (*cursor != '|') {
             return value;
+        }
         *text = cursor + 1;
         value |= ParseBitwiseXor(text);
     }
@@ -611,10 +679,12 @@ int Assembly::Evaluate(const char* text, bool* resolved) {
     expressionUnresolved = false;
     int value = ParseExpression(&cursor);
     cursor = SkipSpaces(cursor);
-    if (*cursor)
+    if (*cursor) {
         Error("unexpected '%s' after expression", cursor);
-    if (resolved)
+    }
+    if (resolved) {
         *resolved = !expressionUnresolved;
+    }
     return value;
 }
 
@@ -623,16 +693,18 @@ int Assembly::Evaluate(const char* text, bool* resolved) {
 
 int Assembly::FitSigned(int value, int bits, const char* what) {
     int minimum = -(1 << (bits - 1)), maximum = (1 << (bits - 1)) - 1;
-    if (value < minimum || value > maximum)
+    if (value < minimum || value > maximum) {
         Error("%s %d doesn't fit (allowed %d..%d)", what, value, minimum, maximum);
+    }
     return value & ((1 << bits) - 1);
 }
 
 // Accepts either a signed or an unsigned value of the given width.
 int Assembly::FitSignedOrUnsigned(int value, int bits, const char* what) {
     int minimum = -(1 << (bits - 1)), maximum = (1 << bits) - 1;
-    if (value < minimum || value > maximum)
+    if (value < minimum || value > maximum) {
         Error("%s %d doesn't fit in %d bits (allowed %d..%d)", what, value, bits, minimum, maximum);
+    }
     return value & ((1 << bits) - 1);
 }
 
@@ -642,8 +714,9 @@ int Assembly::BranchOffset(const char* targetText, int bits) {
     int target = Evaluate(targetText, &resolved);
     int minimum = -(1 << (bits - 1)), maximum = (1 << (bits - 1)) - 1;
 
-    if (!resolved)
+    if (!resolved) {
         return 0;
+    }
     if (target & 1) {
         Error("target 0x%04X is not an even address", target);
         return 0;
@@ -671,12 +744,15 @@ void Assembly::EmitByte(int value) {
     }
     if (pass == 2) {
         image[static_cast<size_t>(locationCounter)] = static_cast<uint8_t>(value);
-        if (locationCounter + 1 > highestAddress)
+        if (locationCounter + 1 > highestAddress) {
             highestAddress = locationCounter + 1;
-        if (lineByteCount == 0)
+        }
+        if (lineByteCount == 0) {
             lineFirstAddress = locationCounter;
-        if (lineByteCount < ListingBytesShown)
+        }
+        if (lineByteCount < ListingBytesShown) {
             lineBytes[lineByteCount] = static_cast<uint8_t>(value);
+        }
         lineByteCount++;
     }
     locationCounter++;
@@ -688,8 +764,9 @@ void Assembly::EmitWord(int value) {
 }
 
 void Assembly::AlignTo(int alignment) {
-    while (locationCounter % alignment)
+    while (locationCounter % alignment) {
         EmitByte(0);
+    }
 }
 
 // Every statement that produces output starts here.
@@ -701,8 +778,9 @@ void Assembly::BeginStatement(int alignment) {
 }
 
 bool Assembly::ExpectOperandCount(const char* mnemonic, int count, int expected) {
-    if (count == expected)
+    if (count == expected) {
         return true;
+    }
     Error("'%s' takes %d operand%s, got %d", mnemonic, expected, expected == 1 ? "" : "s", count);
     return false;
 }
@@ -731,8 +809,9 @@ void Assembly::ParseMemoryOperand(const char* text, int* base, int* offset) {
     }
     *base = ParseRegister(name);
     cursor = SkipSpaces(cursor);
-    if (*cursor == 0)
+    if (*cursor == 0) {
         return;
+    }
     if (*cursor != '+' && *cursor != '-') {
         Error("expected '+' or '-' after the register in '%s'", text);
         return;
@@ -746,53 +825,60 @@ int Assembly::AssembleTableInstruction(const InstructionInfo* info, char* operan
 
     switch (info->form) {
         case InstructionForm::ThreeRegisters:
-            if (!ExpectOperandCount(name, count, 3))
+            if (!ExpectOperandCount(name, count, 3)) {
                 return 0;
+            }
             destination = ExpectRegister(operands[0]);
             sourceA = ExpectRegister(operands[1]);
             sourceB = ExpectRegister(operands[2]);
             return EncodeRegisters(info->opcode, destination, sourceA, sourceB, info->function);
 
         case InstructionForm::TwoRegisters:
-            if (!ExpectOperandCount(name, count, 2))
+            if (!ExpectOperandCount(name, count, 2)) {
                 return 0;
+            }
             destination = ExpectRegister(operands[0]);
             sourceA = ExpectRegister(operands[1]);
             return EncodeRegisters(info->opcode, destination, sourceA, 0, info->function);
 
         case InstructionForm::CompareRegisters:
-            if (!ExpectOperandCount(name, count, 2))
+            if (!ExpectOperandCount(name, count, 2)) {
                 return 0;
+            }
             sourceA = ExpectRegister(operands[0]);
             sourceB = ExpectRegister(operands[1]);
             return EncodeRegisters(info->opcode, 0, sourceA, sourceB, info->function);
 
         case InstructionForm::RegisterImmediate:
-            if (!ExpectOperandCount(name, count, 3))
+            if (!ExpectOperandCount(name, count, 3)) {
                 return 0;
+            }
             destination = ExpectRegister(operands[0]);
             sourceA = ExpectRegister(operands[1]);
             value = FitSigned(Evaluate(operands[2], nullptr), Immediate6Field.bits, "immediate");
             return EncodeImmediate(info->opcode, destination, sourceA, value);
 
         case InstructionForm::CompareImmediate:
-            if (!ExpectOperandCount(name, count, 2))
+            if (!ExpectOperandCount(name, count, 2)) {
                 return 0;
+            }
             sourceA = ExpectRegister(operands[0]);
             value = FitSigned(Evaluate(operands[1], nullptr), Immediate6Field.bits, "immediate");
             return EncodeImmediate(info->opcode, 0, sourceA, value);
 
         case InstructionForm::LoadImmediate:
-            if (!ExpectOperandCount(name, count, 2))
+            if (!ExpectOperandCount(name, count, 2)) {
                 return 0;
+            }
             destination = ExpectRegister(operands[0]);
             value = FitSignedOrUnsigned(Evaluate(operands[1], nullptr), Immediate8Field.bits, "immediate");
             return EncodeLong(info->opcode, destination, value);
 
         case InstructionForm::Memory: {
             int offset;
-            if (!ExpectOperandCount(name, count, 2))
+            if (!ExpectOperandCount(name, count, 2)) {
                 return 0;
+            }
             destination = ExpectRegister(operands[0]);
             ParseMemoryOperand(operands[1], &sourceA, &offset);
             value = FitSigned(offset, Immediate6Field.bits, "offset");
@@ -800,18 +886,21 @@ int Assembly::AssembleTableInstruction(const InstructionInfo* info, char* operan
         }
 
         case InstructionForm::Jump:
-            if (!ExpectOperandCount(name, count, 1))
+            if (!ExpectOperandCount(name, count, 1)) {
                 return 0;
+            }
             return EncodeJump(info->opcode, BranchOffset(operands[0], Offset12Field.bits));
 
         case InstructionForm::SystemRegister:
-            if (!ExpectOperandCount(name, count, 1))
+            if (!ExpectOperandCount(name, count, 1)) {
                 return 0;
+            }
             return EncodeSystem(static_cast<SystemFunction>(info->function), ExpectRegister(operands[0]));
 
         case InstructionForm::SystemBare:
-            if (!ExpectOperandCount(name, count, 0))
+            if (!ExpectOperandCount(name, count, 0)) {
                 return 0;
+            }
             return EncodeSystem(static_cast<SystemFunction>(info->function), 0);
     }
     return 0;
@@ -863,8 +952,9 @@ int Assembly::AssemblePseudoInstruction(const char* mnemonic, char* operands[], 
     }
     if (!strcmp(mnemonic, "pop")) {
         int destination = ExpectOperandCount(mnemonic, count, 1) ? ExpectRegister(operands[0]) : 0;
-        if (destination == StackPointer)
+        if (destination == StackPointer) {
             Error("'pop sp' would lose the stack; load it with lw instead");
+        }
         words[0] = EncodeImmediate(Opcode::LoadWord, destination, StackPointer, 0);
         words[1] = EncodeImmediate(Opcode::AddImmediate, StackPointer, StackPointer, InstructionSize);
         return 2;
@@ -890,8 +980,9 @@ bool Assembly::AssembleInstruction(const char* mnemonic, char* operands[], int c
     }
     int words[2];
     int wordCount = AssemblePseudoInstruction(mnemonic, operands, count, words);
-    for (int index = 0; index < wordCount; index++)
+    for (int index = 0; index < wordCount; index++) {
         EmitWord(words[index]);
+    }
     return wordCount > 0;
 }
 
@@ -914,12 +1005,15 @@ void Assembly::EmitString(const char* text, bool addTerminator) {
             return;
         }
     }
-    if (*cursor != '"')
+    if (*cursor != '"') {
         Error("unterminated string");
-    else if (*SkipSpaces(cursor + 1))
+    }
+    else if (*SkipSpaces(cursor + 1)) {
         Error("unexpected '%s' after string", SkipSpaces(cursor + 1));
-    if (addTerminator)
+    }
+    if (addTerminator) {
         EmitByte(0);
+    }
 }
 
 // Evaluates a count or address that must be known in pass 1 to keep the layout fixed.
@@ -927,8 +1021,9 @@ int Assembly::EvaluateNow(const char* directive, const char* text, bool* ok) {
     bool resolved;
     int value = Evaluate(text, &resolved);
     *ok = resolved;
-    if (!resolved && pass == 1)
+    if (!resolved && pass == 1) {
         ErrorNow("'%s' needs a value that is defined above this line", directive);
+    }
     return value;
 }
 
@@ -936,71 +1031,94 @@ void Assembly::AssembleDirective(const char* directive, char* operands[], int co
     bool ok;
 
     if (!strcmp(directive, ".org")) {
-        if (!ExpectOperandCount(directive, count, 1))
+        if (!ExpectOperandCount(directive, count, 1)) {
             return;
+        }
         int address = EvaluateNow(directive, operands[0], &ok);
-        if (!ok)
+        if (!ok) {
             return;
-        if (address < locationCounter)
+        }
+        if (address < locationCounter) {
             Error("'.org 0x%04X' would move backwards from 0x%04X", address, locationCounter);
-        else if (address > ImageSize)
+        }
+        else if (address > ImageSize) {
             Error("'.org 0x%04X' is in I/O space", address);
-        else
+        }
+        else {
             locationCounter = address;
+        }
         BeginStatement(1);
-    } else if (!strcmp(directive, ".word")) {
+    }
+    else if (!strcmp(directive, ".word")) {
         BeginStatement(InstructionSize);
-        for (int index = 0; index < count; index++)
+        for (int index = 0; index < count; index++) {
             EmitWord(FitSignedOrUnsigned(Evaluate(operands[index], nullptr), WordBits, "word"));
-    } else if (!strcmp(directive, ".byte")) {
+        }
+    }
+    else if (!strcmp(directive, ".byte")) {
         BeginStatement(1);
         for (int index = 0; index < count; index++) {
-            if (operands[index][0] == '"')
+            if (operands[index][0] == '"') {
                 EmitString(operands[index], false);
-            else
+            }
+            else {
                 EmitByte(FitSignedOrUnsigned(Evaluate(operands[index], nullptr), 8, "byte"));
+            }
         }
-    } else if (!strcmp(directive, ".ascii") || !strcmp(directive, ".asciz")) {
+    }
+    else if (!strcmp(directive, ".ascii") || !strcmp(directive, ".asciz")) {
         BeginStatement(1);
-        if (count == 0)
+        if (count == 0) {
             Error("'%s' needs at least one string", directive);
-        for (int index = 0; index < count; index++)
+        }
+        for (int index = 0; index < count; index++) {
             EmitString(operands[index], directive[5] == 'z');
-    } else if (!strcmp(directive, ".space")) {
-        if (!ExpectOperandCount(directive, count, 1))
+        }
+    }
+    else if (!strcmp(directive, ".space")) {
+        if (!ExpectOperandCount(directive, count, 1)) {
             return;
+        }
         int size = EvaluateNow(directive, operands[0], &ok);
-        if (!ok)
+        if (!ok) {
             return;
+        }
         if (size < 0) {
             Error("'.space' size can't be negative");
             return;
         }
         BeginStatement(1);
-        for (int index = 0; index < size; index++)
+        for (int index = 0; index < size; index++) {
             EmitByte(0);
-    } else if (!strcmp(directive, ".align")) {
-        if (!ExpectOperandCount(directive, count, 1))
+        }
+    }
+    else if (!strcmp(directive, ".align")) {
+        if (!ExpectOperandCount(directive, count, 1)) {
             return;
+        }
         int alignment = EvaluateNow(directive, operands[0], &ok);
-        if (!ok)
+        if (!ok) {
             return;
+        }
         if (alignment <= 0) {
             Error("'.align' needs a positive value");
             return;
         }
         BeginStatement(alignment);
-    } else if (!strcmp(directive, ".equ")) {
+    }
+    else if (!strcmp(directive, ".equ")) {
         char name[MaxNameLength];
-        if (!ExpectOperandCount(directive, count, 2))
+        if (!ExpectOperandCount(directive, count, 2)) {
             return;
+        }
         const char* cursor = operands[0];
         if (!ReadIdentifier(&cursor, name) || *cursor) {
             Error("'%s' is not a valid symbol name", operands[0]);
             return;
         }
         DefineSymbol(name, Evaluate(operands[1], nullptr), false);
-    } else {
+    }
+    else {
         Error("unknown directive '%s'", directive);
     }
 }
@@ -1018,8 +1136,9 @@ void Assembly::AssembleLine(char* line) {
     // Leading "label:" definitions, or a "name = value" constant.
     for (;;) {
         const char* start = cursor;
-        if (!ReadIdentifier(&cursor, name))
+        if (!ReadIdentifier(&cursor, name)) {
             break;
+        }
         cursor = SkipSpaces(cursor);
         if (*cursor == ':') {
             AddPendingLabel(name);
@@ -1034,8 +1153,9 @@ void Assembly::AssembleLine(char* line) {
         break;
     }
 
-    if (*cursor == 0)
+    if (*cursor == 0) {
         return;
+    }
     if (!ReadIdentifier(&cursor, mnemonic)) {
         Error("expected an instruction or directive, got '%s'", cursor);
         return;
@@ -1044,32 +1164,40 @@ void Assembly::AssembleLine(char* line) {
         Error("unexpected '%c' after '%s'", *cursor, mnemonic);
         return;
     }
-    for (int index = 0; mnemonic[index]; index++)
+    for (int index = 0; mnemonic[index]; index++) {
         mnemonic[index] = static_cast<char>(tolower(static_cast<unsigned char>(mnemonic[index])));
+    }
 
     int count = SplitOperands(const_cast<char*>(cursor), operands);
 
-    if (mnemonic[0] == '.')
+    if (mnemonic[0] == '.') {
         AssembleDirective(mnemonic, operands, count);
-    else if (!AssembleInstruction(mnemonic, operands, count))
+    }
+    else if (!AssembleInstruction(mnemonic, operands, count)) {
         Error("unknown instruction '%s'", mnemonic);
+    }
 }
 
 void Assembly::ListLine(const std::string& source) {
     char hex[64] = "", text[MaxLineLength + 64];
     int index, shown = lineByteCount < ListingBytesShown ? lineByteCount : ListingBytesShown;
 
-    for (index = 0; index + 1 < shown; index += 2)
+    for (index = 0; index + 1 < shown; index += 2) {
         snprintf(hex + strlen(hex), sizeof hex - strlen(hex), "%04X ", lineBytes[index] | (lineBytes[index + 1] << 8));
-    if (index < shown)
+    }
+    if (index < shown) {
         snprintf(hex + strlen(hex), sizeof hex - strlen(hex), "%02X ", lineBytes[index]);
-    if (lineByteCount > ListingBytesShown)
+    }
+    if (lineByteCount > ListingBytesShown) {
         strcat(hex, "...");
+    }
 
-    if (lineByteCount)
+    if (lineByteCount) {
         snprintf(text, sizeof text, "%04X  %-24s %5d  ", lineFirstAddress, hex, lineNumber);
-    else
+    }
+    else {
         snprintf(text, sizeof text, "      %-24s %5d  ", "", lineNumber);
+    }
     result.listing += text + source + "\n";
 }
 
@@ -1089,11 +1217,13 @@ AssemblyResult Assembly::Run(const std::string& text) {
     for (size_t start = 0;;) {
         size_t end = text.find('\n', start);
         std::string line = text.substr(start, end == std::string::npos ? std::string::npos : end - start);
-        if (!line.empty() && line.back() == '\r')
+        if (!line.empty() && line.back() == '\r') {
             line.pop_back();
+        }
         lines.push_back(line);
-        if (end == std::string::npos)
+        if (end == std::string::npos) {
             break;
+        }
         start = end + 1;
     }
 
@@ -1108,22 +1238,26 @@ AssemblyResult Assembly::Run(const std::string& text) {
             lineNumber = static_cast<int>(index) + 1;
             lineByteCount = 0;
             if (lines[index].size() >= sizeof buffer) {
-                if (pass == 1)
+                if (pass == 1) {
                     ErrorNow("line is longer than %d characters", MaxLineLength - 1);
+                }
                 continue;
             }
             strcpy(buffer, lines[index].c_str());
             AssembleLine(buffer);
-            if (pass == 2 && makeListing)
+            if (pass == 2 && makeListing) {
                 ListLine(lines[index]);
+            }
         }
         FlushPendingLabels();  // labels at the very end of the file
     }
 
-    if (makeListing)
+    if (makeListing) {
         ListSymbols();
-    if (result.errors.empty())
+    }
+    if (result.errors.empty()) {
         result.image.assign(image.begin(), image.begin() + highestAddress);
+    }
     return result;
 }
 

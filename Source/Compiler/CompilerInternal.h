@@ -63,7 +63,12 @@ void ResetPreprocessor();
 // ---------------------------------------------------------------------------
 // Lexer (Lexer.cpp)
 
-enum TokenKind { TokIdent, TokKeyword, TokNumber, TokString, TokPunct, TokEof };
+enum TokenKind { TokIdent,
+                 TokKeyword,
+                 TokNumber,
+                 TokString,
+                 TokPunct,
+                 TokEof };
 
 struct Token {
     TokenKind kind;
@@ -78,7 +83,14 @@ vector<Token> Lex(const string& src);
 // ---------------------------------------------------------------------------
 // Types and the AST (Types.cpp)
 
-enum Kind { KindVoid, KindBool, KindChar, KindInt, KindPointer, KindArray, KindFunction, KindStruct };
+enum Kind { KindVoid,
+            KindBool,
+            KindChar,
+            KindInt,
+            KindPointer,
+            KindArray,
+            KindFunction,
+            KindStruct };
 
 struct Type;
 
@@ -138,12 +150,52 @@ struct Var {
 };
 
 enum NodeKind {
-    NodeNumber, NodeVar, NodeAdd, NodeSub, NodeMul, NodeDiv, NodeMod, NodeAnd, NodeOr, NodeXor,
-    NodeShl, NodeShr, NodeEq, NodeNe, NodeLt, NodeLe, NodeLogAnd, NodeLogOr, NodeNot, NodeBitNot,
-    NodeNeg, NodeAddr, NodeDeref, NodeMember, NodeAssign, NodeCompound, NodeIncDec, NodeCond,
-    NodeComma, NodeCall, NodeCast, NodePtrDiff, NodeZero,
-    NodeBlock, NodeIf, NodeWhile, NodeDo, NodeFor, NodeReturn, NodeBreak, NodeContinue,
-    NodeSwitch, NodeCase, NodeGoto, NodeLabel, NodeExprStmt
+    NodeNumber,
+    NodeVar,
+    NodeAdd,
+    NodeSub,
+    NodeMul,
+    NodeDiv,
+    NodeMod,
+    NodeAnd,
+    NodeOr,
+    NodeXor,
+    NodeShl,
+    NodeShr,
+    NodeEq,
+    NodeNe,
+    NodeLt,
+    NodeLe,
+    NodeLogAnd,
+    NodeLogOr,
+    NodeNot,
+    NodeBitNot,
+    NodeNeg,
+    NodeAddr,
+    NodeDeref,
+    NodeMember,
+    NodeAssign,
+    NodeCompound,
+    NodeIncDec,
+    NodeCond,
+    NodeComma,
+    NodeCall,
+    NodeCast,
+    NodePtrDiff,
+    NodeZero,
+    NodeBlock,
+    NodeIf,
+    NodeWhile,
+    NodeDo,
+    NodeFor,
+    NodeReturn,
+    NodeBreak,
+    NodeContinue,
+    NodeSwitch,
+    NodeCase,
+    NodeGoto,
+    NodeLabel,
+    NodeExprStmt
 };
 
 struct Node {
@@ -151,7 +203,7 @@ struct Node {
     Type* type = nullptr;
     Node *a = nullptr, *b = nullptr, *c = nullptr, *d = nullptr;
     vector<Node*> list;
-    long long value = 0;       // number, var byte offset, inc delta, case value, ptrdiff size
+    long long value = 0;  // number, var byte offset, inc delta, case value, ptrdiff size
     Var* var = nullptr;
     Member* member = nullptr;
     NodeKind op = NodeNumber;  // compound assignment operator
@@ -179,7 +231,7 @@ extern vector<Token> tokens;
 extern size_t pos;
 extern vector<Var*> globals;
 extern std::map<string, Var*> globalsByName;
-extern int labelCounter;   // .L labels: case labels here, the rest in the code generator
+extern int labelCounter;  // .L labels: case labels here, the rest in the code generator
 extern int stringCounter;
 
 Token& Tok();

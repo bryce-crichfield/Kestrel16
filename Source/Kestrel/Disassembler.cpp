@@ -16,8 +16,9 @@ std::string Disassemble(uint16_t address, uint16_t word) {
         return text;
     }
     const InstructionInfo* info = FindInstruction(in);
-    if (!info)
+    if (!info) {
         return "???";
+    }
     const char* name = info->mnemonic;
     switch (info->form) {
         case InstructionForm::ThreeRegisters:

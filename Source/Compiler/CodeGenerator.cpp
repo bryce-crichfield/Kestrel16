@@ -54,18 +54,21 @@ static bool Fits6(long long v) {
 
 static string MemoryOperand(const char* reg, int off) {
     char buffer[32];
-    if (off == 0)
+    if (off == 0) {
         snprintf(buffer, sizeof buffer, "[%s]", reg);
-    else
+    }
+    else {
         snprintf(buffer, sizeof buffer, "[%s%+d]", reg, off);
+    }
     return buffer;
 }
 
 // rd = ra + v  (uses r3 as scratch for big constants; rd/ra must not be r3)
 static void AddConstant(const char* rd, const char* ra, long long v) {
     if (v == 0) {
-        if (strcmp(rd, ra))
+        if (strcmp(rd, ra)) {
             Emit("mov %s, %s", rd, ra);
+        }
         return;
     }
     if (Fits6(v)) {
@@ -95,8 +98,10 @@ static void EmitLoad(Type* t, const char* reg, int off) {
             if (t->isUnsigned) {
                 Emit("li r3, 255");
                 Emit("and r0, r0, r3");
-            } else
+            }
+            else {
                 Emit("sxb r0, r0");
+            }
             return;
         default:
             Emit("lw r0, %s", MemoryOperand(reg, off).c_str());
@@ -105,18 +110,22 @@ static void EmitLoad(Type* t, const char* reg, int off) {
 
 // [reg+off] = r0
 static void EmitStore(Type* t, const char* reg, int off) {
-    if (t->kind == KindChar || t->kind == KindBool)
+    if (t->kind == KindChar || t->kind == KindBool) {
         Emit("sb r0, %s", MemoryOperand(reg, off).c_str());
-    else
+    }
+    else {
         Emit("sw r0, %s", MemoryOperand(reg, off).c_str());
+    }
 }
 
 static void EmitCast(Type* from, Type* to) {
-    if (to->kind == KindVoid)
+    if (to->kind == KindVoid) {
         return;
+    }
     if (to->kind == KindBool) {
-        if (from->kind == KindBool)
+        if (from->kind == KindBool) {
             return;
+        }
         int done = NewLabel();
         Emit("cmpi r0, 0");
         Emit("beq %s", LabelName(done).c_str());
@@ -125,15 +134,19 @@ static void EmitCast(Type* from, Type* to) {
         return;
     }
     if (to->kind == KindChar) {
-        if (from->kind == KindChar && from->isUnsigned == to->isUnsigned)
+        if (from->kind == KindChar && from->isUnsigned == to->isUnsigned) {
             return;
-        if (from->kind == KindBool)
+        }
+        if (from->kind == KindBool) {
             return;
+        }
         if (to->isUnsigned) {
             Emit("li r3, 255");
             Emit("and r0, r0, r3");
-        } else
+        }
+        else {
             Emit("sxb r0, r0");
+        }
     }
 }
 
@@ -156,8 +169,9 @@ static void BranchIfTrue(int label) {
 static void GenerateExpression(Node* n);
 
 static bool IsLocalDirect(Node* n, int* off) {
-    if (n->kind != NodeVar || !n->var->isLocal)
+    if (n->kind != NodeVar || !n->var->isLocal) {
         return false;
+    }
     *off = n->var->offset + (int)n->value;
     return Fits6(*off);
 }
@@ -166,12 +180,15 @@ static bool IsLocalDirect(Node* n, int* off) {
 static void GenerateAddress(Node* n) {
     switch (n->kind) {
         case NodeVar:
-            if (n->var->isLocal)
+            if (n->var->isLocal) {
                 AddConstant("r0", "r5", n->var->offset + n->value);
-            else if (n->value)
+            }
+            else if (n->value) {
                 Emit("la r0, %s+%lld", n->var->label.c_str(), n->value);
-            else
+            }
+            else {
                 Emit("la r0, %s", n->var->label.c_str());
+            }
             return;
         case NodeDeref:
             GenerateExpression(n->a);
@@ -190,11 +207,13 @@ static void GenerateAddress(Node* n) {
 }
 
 static bool IsPowerOfTwo(long long v, int* shift) {
-    if (v <= 0 || (v & (v - 1)))
+    if (v <= 0 || (v & (v - 1))) {
         return false;
+    }
     *shift = 0;
-    while ((1LL << *shift) != v)
+    while ((1LL << *shift) != v) {
         (*shift)++;
+    }
     return true;
 }
 
@@ -242,7 +261,8 @@ static void ApplyOperator(NodeKind op, bool isUnsigned, Node* constantRight) {
                         Emit("li r1, %d", shift);
                         Emit("shr r0, r0, r1");
                     }
-                } else {
+                }
+                else {
                     Emit("li r1, %lld", constantRight->value - 1);
                     Emit("and r0, r0, r1");
                 }
@@ -250,8 +270,9 @@ static void ApplyOperator(NodeKind op, bool isUnsigned, Node* constantRight) {
             }
             useDivide = true;
             CallRuntime(isUnsigned ? ".rt_divu" : ".rt_divs");
-            if (op == NodeMod)
+            if (op == NodeMod) {
                 Emit("mov r0, r1");
+            }
             return;
         case NodeEq:
         case NodeNe:
@@ -260,17 +281,22 @@ static void ApplyOperator(NodeKind op, bool isUnsigned, Node* constantRight) {
             int yes = NewLabel(), done = NewLabel();
             Emit("cmp r0, r1");
             string y = LabelName(yes);
-            if (op == NodeEq)
+            if (op == NodeEq) {
                 Emit("beq %s", y.c_str());
-            else if (op == NodeNe)
+            }
+            else if (op == NodeNe) {
                 Emit("bne %s", y.c_str());
-            else if (op == NodeLt)
+            }
+            else if (op == NodeLt) {
                 Emit("%s %s", isUnsigned ? "bltu" : "blt", y.c_str());
+            }
             else if (isUnsigned) {
                 Emit("bltu %s", y.c_str());
                 Emit("beq %s", y.c_str());
-            } else
+            }
+            else {
                 Emit("ble %s", y.c_str());
+            }
             Emit("li r0, 0");
             Emit("bra %s", LabelName(done).c_str());
             EmitLabel(y);
@@ -407,7 +433,8 @@ static void GenerateExpression(Node* n) {
             Node* constant = n->b->kind == NodeNumber ? n->b : nullptr;
             if (constant) {
                 Emit("li r1, %lld", constant->value & 0xFFFF);
-            } else {
+            }
+            else {
                 Emit("push r0");
                 GenerateExpression(n->b);
                 Emit("mov r1, r0");
@@ -430,7 +457,8 @@ static void GenerateExpression(Node* n) {
                     Emit("li r1, %d", shift);
                     Emit("sar r0, r0, r1");
                 }
-            } else {
+            }
+            else {
                 useDivide = true;
                 Emit("li r1, %lld", n->value);
                 CallRuntime(".rt_divs");
@@ -479,13 +507,15 @@ static void GenerateExpression(Node* n) {
             GenerateAddress(n->a);
             Emit("mov r1, r0");
             EmitLoad(n->a->type, "r1", 0);
-            if (n->isPost)
+            if (n->isPost) {
                 Emit("mov r2, r0");
+            }
             AddConstant("r0", "r0", n->value);
             EmitCast(TypeInt, n->a->type);
             EmitStore(n->a->type, "r1", 0);
-            if (n->isPost)
+            if (n->isPost) {
                 Emit("mov r0, r2");
+            }
             return;
 
         case NodeCall: {
@@ -497,13 +527,15 @@ static void GenerateExpression(Node* n) {
             Node* fn = n->a;
             if (fn->kind == NodeVar && fn->var->type->kind == KindFunction) {
                 Emit("la r4, %s", fn->var->label.c_str());
-            } else {
+            }
+            else {
                 GenerateExpression(fn);
                 Emit("mov r4, r0");
             }
             Emit("jalr r4");
-            if (count)
+            if (count) {
                 AddConstant("sp", "sp", 2 * count);
+            }
             return;
         }
 
@@ -522,8 +554,9 @@ static void GenerateExpression(Node* n) {
 static void GenerateStatement(Node* n) {
     switch (n->kind) {
         case NodeBlock:
-            for (Node* s : n->list)
+            for (Node* s : n->list) {
                 GenerateStatement(s);
+            }
             return;
 
         case NodeExprStmt:
@@ -542,7 +575,8 @@ static void GenerateStatement(Node* n) {
                 EmitLabel(LabelName(otherwise));
                 GenerateStatement(n->c);
                 EmitLabel(LabelName(done));
-            } else {
+            }
+            else {
                 EmitLabel(LabelName(otherwise));
             }
             return;
@@ -580,8 +614,9 @@ static void GenerateStatement(Node* n) {
 
         case NodeFor: {
             int top = NewLabel(), next = NewLabel(), done = NewLabel();
-            if (n->a)
+            if (n->a) {
                 GenerateStatement(n->a);
+            }
             breakLabels.push_back(done);
             continueLabels.push_back(next);
             EmitLabel(LabelName(top));
@@ -591,8 +626,9 @@ static void GenerateStatement(Node* n) {
             }
             GenerateStatement(n->d);
             EmitLabel(LabelName(next));
-            if (n->c)
+            if (n->c) {
                 GenerateExpression(n->c);
+            }
             Emit("j %s", LabelName(top).c_str());
             EmitLabel(LabelName(done));
             breakLabels.pop_back();
@@ -601,20 +637,23 @@ static void GenerateStatement(Node* n) {
         }
 
         case NodeReturn:
-            if (n->a)
+            if (n->a) {
                 GenerateExpression(n->a);
+            }
             Emit("j .Lret%d", functionId);
             return;
 
         case NodeBreak:
-            if (breakLabels.empty())
+            if (breakLabels.empty()) {
                 Fatal(n->line, "'break' outside of a loop or switch");
+            }
             Emit("j %s", LabelName(breakLabels.back()).c_str());
             return;
 
         case NodeContinue:
-            if (continueLabels.empty())
+            if (continueLabels.empty()) {
                 Fatal(n->line, "'continue' outside of a loop");
+            }
             Emit("j %s", LabelName(continueLabels.back()).c_str());
             return;
 
@@ -666,8 +705,9 @@ void GenerateFunction(Var* f, Node* body, int frameSize) {
     Emit("li r2, .Lframe%d", functionId);
     Emit("sub sp, sp, r2");
     GenerateStatement(body);
-    if (f->name == "main")
+    if (f->name == "main") {
         Emit("li r0, 0");
+    }
     EmitLabel(".Lret" + std::to_string(functionId));
     Emit("mov sp, r5");
     Emit("pop r5");

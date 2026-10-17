@@ -33,8 +33,9 @@ string Start(const string& name, const string& text, const CompileOptions& optio
     ResetParser();
     ResetCodeGenerator();
     includePaths = options.includePaths;
-    for (const auto& [macro, value] : options.defines)
+    for (const auto& [macro, value] : options.defines) {
         macros[macro].body = PPTokens(value);
+    }
 
     string preprocessed;
     Preprocess(sourceName, text, preprocessed, 0);
@@ -45,15 +46,19 @@ string CompileText(const string& name, const string& text, const CompileOptions&
     tokens = Lex(Start(name, text, options));
     pos = 0;
     EnterScope();
-    while (Tok().kind != TokEof)
+    while (Tok().kind != TokEof) {
         TopLevel();
+    }
 
     auto mainIt = globalsByName.find("main");
-    if (mainIt == globalsByName.end() || mainIt->second->type->kind != KindFunction || !mainIt->second->isDefined)
+    if (mainIt == globalsByName.end() || mainIt->second->type->kind != KindFunction || !mainIt->second->isDefined) {
         Fatal(Tok().line, "no definition of 'main'");
-    for (Var* g : globals)
-        if (g->type->kind == KindFunction && !g->isDefined)
+    }
+    for (Var* g : globals) {
+        if (g->type->kind == KindFunction && !g->isDefined) {
             warnings.push_back(sourceName + ": warning: function '" + g->name + "' is declared but never defined");
+        }
+    }
     return ProgramText();
 }
 

@@ -55,25 +55,31 @@ std::vector<std::unique_ptr<Component>> library;
 std::string componentsDirectory = COMPONENTS_PATH;
 
 Component* FindComponent(const std::string& name) {
-    for (auto& component : library)
-        if (component->name == name)
+    for (auto& component : library) {
+        if (component->name == name) {
             return component.get();
+        }
+    }
     return nullptr;
 }
 
 std::vector<const Node*> PinNodes(const Component& component, NodeKind side) {
     std::vector<const Node*> pins;
-    for (const Node& node : component.nodes)
-        if (node.kind == side)
+    for (const Node& node : component.nodes) {
+        if (node.kind == side) {
             pins.push_back(&node);
+        }
+    }
     return pins;
 }
 
 std::vector<PinBit> PinBits(const Component& component, NodeKind side) {
     std::vector<PinBit> pins;
-    for (const Node* node : PinNodes(component, side))
-        for (int bit = 0; bit < node->width && static_cast<int>(pins.size()) < MaxPinsPerSide; bit++)
+    for (const Node* node : PinNodes(component, side)) {
+        for (int bit = 0; bit < node->width && static_cast<int>(pins.size()) < MaxPinsPerSide; bit++) {
             pins.push_back({node, bit});
+        }
+    }
     return pins;
 }
 
@@ -82,58 +88,73 @@ static std::string BitLabel(const Node& node, int bit) {
 }
 
 int InputCount(const Node& node) {
-    if (node.kind == NodeKind::Terminal)
+    if (node.kind == NodeKind::Terminal) {
         return TerminalControlPins + TerminalDataBits;
-    if (node.kind == NodeKind::Input)
+    }
+    if (node.kind == NodeKind::Input) {
         return 0;
-    if (node.kind == NodeKind::Output)
+    }
+    if (node.kind == NodeKind::Output) {
         return node.width;
-    if (node.kind == NodeKind::Rom)
+    }
+    if (node.kind == NodeKind::Rom) {
         return node.memory ? node.memory->addressBits + RomControlPins : 0;
-    if (node.kind == NodeKind::Ram)
+    }
+    if (node.kind == NodeKind::Ram) {
         return node.memory ? node.memory->addressBits + RamControlPins + node.memory->dataBits : 0;
-    if (IsPrimitive(node.kind))
+    }
+    if (IsPrimitive(node.kind)) {
         return Primitives[static_cast<int>(node.kind)].inputCount;
+    }
     const Component* type = FindComponent(node.typeName);
     return type ? static_cast<int>(PinBits(*type, NodeKind::Input).size()) : 0;
 }
 
 int OutputCount(const Node& node) {
-    if (node.kind == NodeKind::Terminal)
+    if (node.kind == NodeKind::Terminal) {
         return TerminalDataBits + 1;  // and IRQ
-    if (node.kind == NodeKind::Input)
+    }
+    if (node.kind == NodeKind::Input) {
         return node.width;
-    if (node.kind == NodeKind::Output)
+    }
+    if (node.kind == NodeKind::Output) {
         return 0;
-    if (IsMemory(node.kind))
+    }
+    if (IsMemory(node.kind)) {
         return node.memory ? node.memory->dataBits : 0;
-    if (IsPrimitive(node.kind))
+    }
+    if (IsPrimitive(node.kind)) {
         return Primitives[static_cast<int>(node.kind)].outputCount;
+    }
     const Component* type = FindComponent(node.typeName);
     return type ? static_cast<int>(PinBits(*type, NodeKind::Output).size()) : 0;
 }
 
 std::string PinName(const Node& node, bool output, int index) {
-    if (node.kind == NodeKind::Input || node.kind == NodeKind::Output)
+    if (node.kind == NodeKind::Input || node.kind == NodeKind::Output) {
         return BitLabel(node, index);
+    }
     if (node.kind == NodeKind::Terminal) {
-        if (output)
+        if (output) {
             return index < TerminalDataBits ? "D" + std::to_string(index) : "IRQ";
+        }
         return index < TerminalControlPins ? TerminalControlNames[index] : "D" + std::to_string(index - TerminalControlPins);
     }
     if (IsMemory(node.kind)) {
         static const char* const ControlNames[] = {"/CE", "/OE", "/WE"};
         int control = output ? -1 : index - node.memory->addressBits;
         int controls = node.kind == NodeKind::Rom ? RomControlPins : RamControlPins;
-        if (control >= 0 && control < controls)
+        if (control >= 0 && control < controls) {
             return ControlNames[control];
+        }
         if (control >= controls) {  // a RAM's data pins, input side
             output = true;
             index = control - controls;
         }
         const std::vector<std::string>& names = output ? node.memory->dataNames : node.memory->addressNames;
-        if (index < static_cast<int>(names.size()) && !names[index].empty())
+        if (index < static_cast<int>(names.size()) && !names[index].empty()) {
             return names[index];
+        }
         return (output ? "D" : "A") + std::to_string(index);
     }
     if (IsPrimitive(node.kind)) {
@@ -141,8 +162,9 @@ std::string PinName(const Node& node, bool output, int index) {
         return output ? info.outputNames[index] : info.inputNames[index];
     }
     const Component* type = FindComponent(node.typeName);
-    if (!type)
+    if (!type) {
         return "?";
+    }
     std::vector<PinBit> pins = PinBits(*type, output ? NodeKind::Output : NodeKind::Input);
     return index < static_cast<int>(pins.size()) ? BitLabel(*pins[index].node, pins[index].bit) : "?";
 }
@@ -166,10 +188,12 @@ std::string NodeTitle(const Node& node) {
 
 static bool SplitBitName(const std::string& name, std::string& prefix, int& number) {
     size_t digits = name.size();
-    while (digits > 0 && std::isdigit(static_cast<unsigned char>(name[digits - 1])))
+    while (digits > 0 && std::isdigit(static_cast<unsigned char>(name[digits - 1]))) {
         digits--;
-    if (digits == name.size() || digits == 0 || name.size() - digits > 3)
+    }
+    if (digits == name.size() || digits == 0 || name.size() - digits > 3) {
         return false;
+    }
     prefix = name.substr(0, digits);
     number = atoi(name.c_str() + digits);
     return true;
@@ -182,10 +206,12 @@ std::vector<PinGroup> PinGroups(const Node& node, bool output) {
     int number = 0, previousNumber = -2;
     for (int index = 0; index < count; index++) {
         bool numbered = SplitBitName(PinName(node, output, index), prefix, number);
-        if (numbered && !groups.empty() && prefix == previous && number == previousNumber + 1)
+        if (numbered && !groups.empty() && prefix == previous && number == previousNumber + 1) {
             groups.back().count++;
-        else
+        }
+        else {
             groups.push_back({index, 1});
+        }
         previous = numbered ? prefix : "";
         previousNumber = numbered ? number : -2;
     }
@@ -193,9 +219,11 @@ std::vector<PinGroup> PinGroups(const Node& node, bool output) {
 }
 
 PinGroup GroupOfPin(const std::vector<PinGroup>& groups, int pin) {
-    for (const PinGroup& group : groups)
-        if (pin >= group.first && pin < group.first + group.count)
+    for (const PinGroup& group : groups) {
+        if (pin >= group.first && pin < group.first + group.count) {
             return group;
+        }
+    }
     return {pin, 1};
 }
 
@@ -213,8 +241,9 @@ void MergeBusWires(Component& component) {
         return GroupOfPin(found->second, static_cast<int>(pin)).first;
     };
     std::vector<Wire> singles, result;
-    for (const Wire& wire : component.wires)
+    for (const Wire& wire : component.wires) {
         (wire.width == 1 ? singles : result).push_back(wire);
+    }
     auto offset = [](const Wire& wire) { return static_cast<int64_t>(wire.toPin) - static_cast<int64_t>(wire.fromPin); };
     std::sort(singles.begin(), singles.end(), [&](const Wire& a, const Wire& b) {
         return std::make_tuple(a.fromNode, a.toNode, offset(a), a.fromPin) <
@@ -229,8 +258,9 @@ void MergeBusWires(Component& component) {
             if (next.fromNode != first.fromNode || next.toNode != first.toNode || offset(next) != offset(first) ||
                 next.fromPin != first.fromPin + (end - start) ||
                 groupFirst(next.fromNode, true, next.fromPin) != fromGroup ||
-                groupFirst(next.toNode, false, next.toPin) != toGroup)
+                groupFirst(next.toNode, false, next.toPin) != toGroup) {
                 break;
+            }
         }
         Wire merged = first;
         merged.width = static_cast<uint32_t>(end - start);
@@ -242,16 +272,20 @@ void MergeBusWires(Component& component) {
 
 // Does `component` use `target` anywhere inside it?
 bool Uses(const Component& component, const std::string& target, int depth) {
-    if (depth > MaxNestingDepth)
+    if (depth > MaxNestingDepth) {
         return true;  // treat runaway nesting as a cycle
+    }
     for (const Node& node : component.nodes) {
-        if (node.kind != NodeKind::Component)
+        if (node.kind != NodeKind::Component) {
             continue;
-        if (node.typeName == target)
+        }
+        if (node.typeName == target) {
             return true;
+        }
         const Component* child = FindComponent(node.typeName);
-        if (child && Uses(*child, target, depth + 1))
+        if (child && Uses(*child, target, depth + 1)) {
             return true;
+        }
     }
     return false;
 }
@@ -261,11 +295,14 @@ std::string UniquePinLabel(const Component& component, NodeKind side) {
     for (int number = 1;; number++) {
         std::string label = prefix + std::to_string(number);
         bool taken = false;
-        for (const Node& node : component.nodes)
-            if ((node.kind == NodeKind::Input || node.kind == NodeKind::Output) && node.label == label)
+        for (const Node& node : component.nodes) {
+            if ((node.kind == NodeKind::Input || node.kind == NodeKind::Output) && node.label == label) {
                 taken = true;
-        if (!taken)
+            }
+        }
+        if (!taken) {
             return label;
+        }
     }
 }
 
@@ -274,14 +311,17 @@ uint32_t AddNode(Component& component, NodeKind kind, const std::string& typeNam
     node.id = component.nextId++;
     node.kind = kind;
     node.typeName = typeName;
-    if (kind == NodeKind::Input || kind == NodeKind::Output)
+    if (kind == NodeKind::Input || kind == NodeKind::Output) {
         node.label = label.empty() ? UniquePinLabel(component, kind) : label;
+    }
     if (IsMemory(kind)) {
         node.memory = std::make_shared<MemoryData>();
-        if (kind == NodeKind::Ram)
+        if (kind == NodeKind::Ram) {
             node.memory->Resize(15, 8);  // a 62256
-        else
+        }
+        else {
             node.memory->Resize(node.memory->addressBits, node.memory->dataBits);
+        }
     }
     node.placement = Node::Placement::Grid;
     node.position = ImVec2(40.0f + 30.0f * static_cast<float>(component.nodes.size() % 10),
@@ -293,10 +333,12 @@ uint32_t AddNode(Component& component, NodeKind kind, const std::string& typeNam
 
 void Connect(Component& component, uint32_t fromNode, int fromPin, uint32_t toNode, int toPin, int width) {
     auto& wires = component.wires;
-    for (const Wire& wire : wires)
+    for (const Wire& wire : wires) {
         if (wire.fromNode == fromNode && wire.fromPin == static_cast<uint32_t>(fromPin) && wire.toNode == toNode &&
-            wire.toPin == static_cast<uint32_t>(toPin) && wire.width == static_cast<uint32_t>(width))
+            wire.toPin == static_cast<uint32_t>(toPin) && wire.width == static_cast<uint32_t>(width)) {
             return;
+        }
+    }
     Wire wire;
     wire.id = component.nextId++;
     wire.fromNode = fromNode;
@@ -339,8 +381,9 @@ void PruneWires(Component& component) {
                                           static_cast<int>(wire.toPin + wire.width) > InputCount(*to);
                                }),
                 wires.end());
-    if (wires.size() != before)
+    if (wires.size() != before) {
         component.dirty = true;
+    }
 }
 
 // After a ROM or RAM changes size, moves wires on its control and data-in pins to where those
@@ -350,15 +393,18 @@ void RemapMemoryWires(Component& component, const Node& node, int oldAddressBits
     int newAddressBits = node.memory->addressBits, newDataBits = node.memory->dataBits;
     auto& wires = component.wires;
     auto remap = [&](int pin) {
-        if (pin < oldAddressBits)
+        if (pin < oldAddressBits) {
             return pin < newAddressBits ? pin : -1;
-        if (pin < oldAddressBits + controls)
+        }
+        if (pin < oldAddressBits + controls) {
             return pin - oldAddressBits + newAddressBits;
+        }
         return pin - oldAddressBits - controls < newDataBits ? pin - oldAddressBits + newAddressBits : -1;
     };
     for (Wire& wire : wires) {
-        if (wire.toNode != node.id)
+        if (wire.toNode != node.id) {
             continue;
+        }
         int first = remap(static_cast<int>(wire.toPin)), last = remap(static_cast<int>(wire.toPin + wire.width) - 1);
         bool keep = first >= 0 && last - first == static_cast<int>(wire.width) - 1;  // a bus stays in one piece
         wire.toPin = keep ? static_cast<uint32_t>(first) : UINT32_MAX;
@@ -378,23 +424,29 @@ Component* CreateComponent(const std::string& name) {
 }
 
 std::string UniqueComponentName(const std::string& base) {
-    if (!FindComponent(base))
+    if (!FindComponent(base)) {
         return base;
+    }
     for (int number = 2;; number++) {
         std::string name = base + " " + std::to_string(number);
-        if (!FindComponent(name))
+        if (!FindComponent(name)) {
             return name;
+        }
     }
 }
 
 bool IsValidComponentName(const std::string& name) {
-    if (name.empty() || name.size() >= MaxNameLength)
+    if (name.empty() || name.size() >= MaxNameLength) {
         return false;
-    if (name.front() == ' ' || name.back() == ' ')
+    }
+    if (name.front() == ' ' || name.back() == ' ') {
         return false;
-    for (char character : name)
-        if (!isalnum(static_cast<unsigned char>(character)) && character != ' ' && character != '_' && character != '-')
+    }
+    for (char character : name) {
+        if (!isalnum(static_cast<unsigned char>(character)) && character != ' ' && character != '_' && character != '-') {
             return false;
+        }
+    }
     return true;
 }
 

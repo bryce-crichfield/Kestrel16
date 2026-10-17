@@ -2,3 +2,7 @@ BasedOnStyle: Chromium
 ColumnLimit: 0
 IndentWidth: 4
 ContinuationIndentWidth: 4
+InsertBraces: true
+BreakBeforeBraces: Custom
+BraceWrapping:
+  BeforeElse: true

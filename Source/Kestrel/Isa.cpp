@@ -79,13 +79,16 @@ Instruction Decode(uint16_t word) {
 const InstructionInfo* FindInstruction(const Instruction& instruction) {
     for (int index = 0; index < InstructionCount; index++) {
         const InstructionInfo& info = Instructions[index];
-        if (info.opcode != instruction.opcode)
+        if (info.opcode != instruction.opcode) {
             continue;
-        if (!HasFunction(info.opcode))
+        }
+        if (!HasFunction(info.opcode)) {
             return &info;
+        }
         int function = info.opcode == Opcode::System ? instruction.systemFunction : instruction.function;
-        if (info.function == function)
+        if (info.function == function) {
             return &info;
+        }
     }
     return nullptr;
 }

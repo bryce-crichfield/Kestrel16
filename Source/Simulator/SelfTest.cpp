@@ -141,8 +141,9 @@ int RunSelfTest() {
             HalfStep(simulation);  // rising edge
             HalfStep(simulation);  // falling edge
             int value = ReadOutput(simulation, *counter, "Q0") | (ReadOutput(simulation, *counter, "Q1") << 1);
-            if (value != (cycle & 3))
+            if (value != (cycle & 3)) {
                 counted = false;
+            }
         }
         Check(counted, "ripple counter counts 1, 2, 3, 0, ...");
         printf("Counter: slowest path %d gate delays\n", simulation.slowestSettleSteps);
@@ -210,13 +211,15 @@ wires:
             };
             auto read = [&] {
                 int value = 0;
-                for (int bit = 0; bit < 4; bit++)
+                for (int bit = 0; bit < 4; bit++) {
                     value |= ReadOutput(simulation, shifter, ("Q" + std::to_string(bit)).c_str()) << bit;
+                }
                 return value;
             };
             // Shift in 1, 0, 1, 1: the first bit in ends up in Q3.
-            for (int bit : {1, 0, 1, 1})
+            for (int bit : {1, 0, 1, 1}) {
                 clockIn(bit);
+            }
             Check(read() == 0b1011, "shift register holds 1,0,1,1 (Q3..Q0)");
             clockIn(0);
             Check(read() == 0b0110, "shift register shifts once more");
@@ -345,9 +348,11 @@ wires:
             for (int select = 0; select < 4; select++) {
                 SetInput(simulation, decoder, "S0", select & 1);
                 SetInput(simulation, decoder, "S1", select >> 1);
-                for (int line = 0; line < 4; line++)
-                    if (ReadOutput(simulation, decoder, ("Y" + std::to_string(line)).c_str()) != (line == select))
+                for (int line = 0; line < 4; line++) {
+                    if (ReadOutput(simulation, decoder, ("Y" + std::to_string(line)).c_str()) != (line == select)) {
                         decodes = false;
+                    }
+                }
             }
             Check(decodes, "ROM decodes 2 bits to one of 4 lines");
             SetInput(simulation, decoder, "OE", 1);
@@ -454,8 +459,9 @@ wires:
             library.push_back(std::move(parsed));
             Component& ramTest = *library.back();
             std::vector<std::string> wireProblems = ResolveWires(ramTest);
-            for (const std::string& problem : wireProblems)
+            for (const std::string& problem : wireProblems) {
                 printf("  %s\n", problem.c_str());
+            }
             Check(wireProblems.empty() && ramTest.wires.size() == 13, "RAM wires resolve, D0 on both sides");
 
             Simulation simulation;  // randomRam is off: RAM starts as zeros
@@ -540,13 +546,15 @@ wires:
         BuildSimulation(simulation, terminalTest);
         auto set = [&](const char* label, int value) { SetInput(simulation, terminalTest, label, value); };
         auto setByte = [&](int byte) {
-            for (int bit = 0; bit < 8; bit++)
+            for (int bit = 0; bit < 8; bit++) {
                 set(("DIN" + std::to_string(bit)).c_str(), (byte >> bit) & 1);
+            }
         };
         auto readByte = [&] {
             int byte = 0;
-            for (int bit = 0; bit < 8; bit++)
+            for (int bit = 0; bit < 8; bit++) {
                 byte |= ReadOutput(simulation, terminalTest, ("D" + std::to_string(bit)).c_str()) << bit;
+            }
             return byte;
         };
         // Every switch starts at 0, which is a write cycle in progress: end it, then start clean.
@@ -599,12 +607,14 @@ wires:
     Check(SaveAll() == 0, "save all");
     library.clear();
     std::vector<std::string> problems = LoadLibrary();
-    for (const std::string& problem : problems)
+    for (const std::string& problem : problems) {
         printf("  %s\n", problem.c_str());
+    }
     Check(problems.empty() && library.size() == 11, "reload all eleven components");
     Check(FindComponent("HA") && FindComponent("Full Adder"), "renamed reference survives the round trip");
-    if (FindComponent("Full Adder"))
+    if (FindComponent("Full Adder")) {
         TestFullAdder("Full adder (reloaded)");
+    }
     if (Component* decoder = FindComponent("Decoder ROM")) {
         const Node* rom = decoder->FindNode(3);
         Check(rom && rom->memory->words == std::vector<uint32_t>({1, 2, 4, 8}) && PinName(*rom, true, 3) == "Y3",

@@ -13,8 +13,9 @@ namespace Kestrel {
 
 void OpenRomEditor(uint32_t nodeId) {
     Node* node = app.current->FindNode(nodeId);
-    if (!node || !IsMemory(node->kind))
+    if (!node || !IsMemory(node->kind)) {
         return;
+    }
     app.romEditorOpen = true;
     app.romComponent = app.current;
     app.romNode = nodeId;
@@ -25,29 +26,35 @@ void OpenRomEditor(uint32_t nodeId) {
 
 // The address on a ROM's pins in the running simulation, or -1 when it isn't being simulated.
 static int RomAddressNow(const Node& node) {
-    if (app.mode != Mode::Simulate || app.romComponent != app.current)
+    if (app.mode != Mode::Simulate || app.romComponent != app.current) {
         return -1;
+    }
     int address = 0;
-    for (int bit = 0; bit < node.memory->addressBits; bit++)
+    for (int bit = 0; bit < node.memory->addressBits; bit++) {
         address |= app.simulation.Value(app.simulation.NetOfInput(node.id, bit)) << bit;
+    }
     return address;
 }
 
 // The words the window shows: a ROM's contents, or a simulated RAM's (nullptr when not simulating it).
 static std::vector<uint32_t>* MemoryWords(Node& node) {
-    if (node.kind == NodeKind::Rom)
+    if (node.kind == NodeKind::Rom) {
         return &node.memory->words;
-    if (app.mode != Mode::Simulate || app.romComponent != app.current)
+    }
+    if (app.mode != Mode::Simulate || app.romComponent != app.current) {
         return nullptr;
+    }
     auto found = app.simulation.topRams.find(node.id);
     return found == app.simulation.topRams.end() ? nullptr : &app.simulation.rams[static_cast<size_t>(found->second)].words;
 }
 
 static void RomContentsChanged(Component& component, const Node& node) {
-    if (node.kind == NodeKind::Rom)
+    if (node.kind == NodeKind::Rom) {
         component.dirty = true;  // a RAM's live contents aren't saved
-    if (app.mode == Mode::Simulate)
+    }
+    if (app.mode == Mode::Simulate) {
         RecordSettle(app.simulation);  // the simulation sees the change
+    }
 }
 
 static void DrawRamToolbar(Component& component, Node& node, std::vector<uint32_t>* live) {
@@ -64,8 +71,9 @@ static void DrawRamToolbar(Component& component, Node& node, std::vector<uint32_
         ram.image = path;
         std::string problem = LoadRomImage(ram);
         component.dirty = true;
-        if (app.mode == Mode::Simulate)
+        if (app.mode == Mode::Simulate) {
             BuildSimulation(app.simulation, *app.current);
+        }
         SetStatus("%s", problem.empty() ? ("RAM now starts out holding " + path).c_str() : problem.c_str());
     }
     ImGui::SameLine();
@@ -87,14 +95,16 @@ static void DrawRamToolbar(Component& component, Node& node, std::vector<uint32_
             ram.image.clear();
             component.dirty = true;
         }
-    } else {
+    }
+    else {
         ImGui::TextDisabled("Starts out holding %s", app.simulation.randomRam ? "random bytes" : "zeros");
     }
     if (!live) {
         ImGui::TextWrapped(
             "A RAM's contents exist only while it is being simulated. Simulate this component (F5) "
             "to see and edit them.");
-    } else {
+    }
+    else {
         ImGui::SameLine();
         if (ImGui::SmallButton("Clear all")) {
             std::fill(live->begin(), live->end(), 0);
@@ -152,7 +162,8 @@ static void DrawRomToolbar(Component& component, Node& node) {
             RomContentsChanged(component, node);
         }
         ImGui::SetItemTooltip("Keep the current words as this ROM's own, editable contents");
-    } else {
+    }
+    else {
         ImGui::TextDisabled("Contents are saved in the component file");
         ImGui::SameLine();
         if (ImGui::SmallButton("Clear all")) {
@@ -163,8 +174,9 @@ static void DrawRomToolbar(Component& component, Node& node) {
 
     if (ImGui::CollapsingHeader("Pin names")) {
         auto nameEditor = [&](const char* id, std::vector<std::string>& names, const char* prefix) {
-            if (!ImGui::BeginTable(id, 4, ImGuiTableFlags_SizingStretchSame))
+            if (!ImGui::BeginTable(id, 4, ImGuiTableFlags_SizingStretchSame)) {
                 return;
+            }
             for (size_t bit = 0; bit < names.size(); bit++) {
                 ImGui::TableNextColumn();
                 char buffer[MaxNameLength];
@@ -198,8 +210,9 @@ static void DrawRomHexView(Component& component, Node& node, std::vector<uint32_
 
     if (!ImGui::BeginTable("hex", perRow + 1,
                            ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX | ImGuiTableFlags_RowBg |
-                               ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingFixedFit))
+                               ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingFixedFit)) {
         return;
+    }
     ImGui::TableSetupScrollFreeze(1, 1);
     ImGui::TableSetupColumn("Address");
     for (int column = 0; column < perRow; column++) {
@@ -211,20 +224,23 @@ static void DrawRomHexView(Component& component, Node& node, std::vector<uint32_
 
     ImGuiListClipper clipper;
     clipper.Begin(rows);
-    if (scrollToCurrent)
+    if (scrollToCurrent) {
         clipper.IncludeItemByIndex(current / perRow);
+    }
     while (clipper.Step()) {
         for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; row++) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::TextDisabled("%0*X", addressDigits, row * perRow);
-            if (scrollToCurrent && row == current / perRow)
+            if (scrollToCurrent && row == current / perRow) {
                 ImGui::SetScrollHereY(0.5f);
+            }
             for (int column = 0; column < perRow; column++) {
                 size_t address = static_cast<size_t>(row * perRow + column);
                 ImGui::TableNextColumn();
-                if (static_cast<int>(address) == current)
+                if (static_cast<int>(address) == current) {
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, IM_COL32(60, 140, 70, 200));
+                }
                 uint32_t value = words[address];
                 ImGui::PushID(static_cast<int>(address));
                 ImGui::SetNextItemWidth(cellWidth);
@@ -248,36 +264,42 @@ static void DrawRomBitsView(Component& component, Node& node, std::vector<uint32
     if (!ImGui::BeginTable("bits", rom.dataBits + 3,
                            ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX | ImGuiTableFlags_RowBg |
                                ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingFixedFit |
-                               ImGuiTableFlags_HighlightHoveredColumn))
+                               ImGuiTableFlags_HighlightHoveredColumn)) {
         return;
+    }
     ImGui::TableSetupScrollFreeze(3, 1);
     ImGui::TableSetupColumn("Address");
     ImGui::TableSetupColumn("Address bits");
     ImGui::TableSetupColumn("Word");
-    for (int bit = rom.dataBits - 1; bit >= 0; bit--)
+    for (int bit = rom.dataBits - 1; bit >= 0; bit--) {
         ImGui::TableSetupColumn(PinName(node, true, bit).c_str());
+    }
     ImGui::TableHeadersRow();
 
     ImGuiListClipper clipper;
     clipper.Begin(static_cast<int>(words.size()));
-    if (scrollToCurrent)
+    if (scrollToCurrent) {
         clipper.IncludeItemByIndex(current);
+    }
     while (clipper.Step()) {
         for (int address = clipper.DisplayStart; address < clipper.DisplayEnd; address++) {
             ImGui::TableNextRow();
-            if (address == current)
+            if (address == current) {
                 ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, IM_COL32(60, 140, 70, 200));
+            }
             ImGui::TableNextColumn();
             ImGui::TextDisabled("%0*X", addressDigits, address);
-            if (scrollToCurrent && address == current)
+            if (scrollToCurrent && address == current) {
                 ImGui::SetScrollHereY(0.5f);
+            }
             ImGui::TableNextColumn();
             char binary[MaxMemoryAddressBits + MaxMemoryAddressBits / 4 + 1];
             int length = 0;
             for (int bit = rom.addressBits - 1; bit >= 0; bit--) {
                 binary[length++] = (address >> bit) & 1 ? '1' : '0';
-                if (bit && bit % 4 == 0)
+                if (bit && bit % 4 == 0) {
                     binary[length++] = ' ';
+                }
             }
             binary[length] = 0;
             ImGui::TextUnformatted(binary);
@@ -301,8 +323,9 @@ static void DrawRomBitsView(Component& component, Node& node, std::vector<uint32
 }
 
 void DrawRomEditor() {
-    if (!app.romEditorOpen)
+    if (!app.romEditorOpen) {
         return;
+    }
     bool exists = std::any_of(library.begin(), library.end(),
                               [](const std::unique_ptr<Component>& component) { return component.get() == app.romComponent; });
     Node* node = exists ? app.romComponent->FindNode(app.romNode) : nullptr;
@@ -325,10 +348,12 @@ void DrawRomEditor() {
         return;
     }
 
-    if (ram)
+    if (ram) {
         DrawRamToolbar(component, *node, words);
-    else
+    }
+    else {
         DrawRomToolbar(component, *node);
+    }
 
     ImGui::RadioButton("Hex", &app.romView, 0);
     ImGui::SameLine();
@@ -347,10 +372,12 @@ void DrawRomEditor() {
 
     if (words) {
         ImGui::BeginDisabled(!ram && !rom.image.empty());
-        if (app.romView == 0)
+        if (app.romView == 0) {
             DrawRomHexView(component, *node, *words, current, scrollToCurrent);
-        else
+        }
+        else {
             DrawRomBitsView(component, *node, *words, current, scrollToCurrent);
+        }
         ImGui::EndDisabled();
     }
 

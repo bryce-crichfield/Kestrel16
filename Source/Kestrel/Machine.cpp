@@ -59,8 +59,9 @@ uint16_t Machine::ReadMemoryWord(uint16_t address) const {
 
 uint16_t Machine::ReadWord(uint16_t address) {
     address &= WordAlignMask;
-    if (address >= Address::IoBase)
+    if (address >= Address::IoBase) {
         return IoRead(address);
+    }
     return ReadMemoryWord(address);
 }
 
@@ -84,8 +85,9 @@ uint16_t Machine::ReadByte(uint16_t address) {
 
 void Machine::WriteByte(uint16_t address, uint8_t value) {
     if (address >= Address::IoBase) {
-        if (!(address & 1))
+        if (!(address & 1)) {
             IoWrite(address, value);
+        }
         return;
     }
     memory[address] = value;
@@ -103,14 +105,16 @@ void Machine::TickTimer() {
 
 uint8_t Machine::PendingInterrupts(uint8_t slots) {
     uint8_t pending = cpu.timerPending ? TimerBit : 0;
-    if ((slots & UartBit) && terminal.KeyWaiting())
+    if ((slots & UartBit) && terminal.KeyWaiting()) {
         pending |= UartBit;  // asks the terminal only if it matters
+    }
     return static_cast<uint8_t>(pending & slots);
 }
 
 bool Machine::CanWake() {
-    if (!cpu.interruptsEnabled)
+    if (!cpu.interruptsEnabled) {
         return false;
+    }
     return ((cpu.interruptMask & TimerBit) && (cpu.timerReload || cpu.timerPending)) || (cpu.interruptMask & UartBit);
 }
 
@@ -246,16 +250,18 @@ StepResult Machine::Step(StepInfo* info) {
         cpu.programCounter = Address::InterruptVector;
     }
 
-    if (cpu.halted)
+    if (cpu.halted) {
         return CanWake() ? StepResult::Running : StepResult::Halted;
+    }
 
     uint16_t address = cpu.programCounter & WordAlignMask;
     uint16_t word = ReadMemoryWord(address);
     uint16_t nextAddress = static_cast<uint16_t>(address + InstructionSize);
     Instruction in = Decode(word);
     bool legal = true;
-    if (info)
+    if (info) {
         *info = {true, address, word};
+    }
 
     switch (in.opcode) {
         case Opcode::Alu:
@@ -286,8 +292,9 @@ StepResult Machine::Step(StepInfo* info) {
             WriteByte(EffectiveAddress(in), static_cast<uint8_t>(cpu.registers[in.destination] & ByteMask));
             break;
         case Opcode::Branch:
-            if (ConditionHolds(in.condition, cpu.flags))
+            if (ConditionHolds(in.condition, cpu.flags)) {
                 nextAddress = BranchTarget(nextAddress, in.offset8);
+            }
             break;
         case Opcode::Jump:
             nextAddress = BranchTarget(nextAddress, in.offset12);

@@ -13,10 +13,12 @@ bool HasFlag(uint8_t flags, uint8_t flag) {
 
 void SetZeroNegative(uint16_t result, uint8_t& flags) {
     flags &= static_cast<uint8_t>(~(Flag::Zero | Flag::Negative));
-    if (result == 0)
+    if (result == 0) {
         flags |= Flag::Zero;
-    if (result & SignBit16)
+    }
+    if (result & SignBit16) {
         flags |= Flag::Negative;
+    }
 }
 
 }  // namespace
@@ -26,10 +28,12 @@ uint16_t AluAdd(uint16_t a, uint16_t b, unsigned carryIn, uint8_t& flags) {
     uint16_t result = static_cast<uint16_t>(sum);
     SetZeroNegative(result, flags);
     flags &= static_cast<uint8_t>(~(Flag::Carry | Flag::Overflow));
-    if (sum & CarryOut16)
+    if (sum & CarryOut16) {
         flags |= Flag::Carry;
-    if (~(a ^ b) & (a ^ result) & SignBit16)
+    }
+    if (~(a ^ b) & (a ^ result) & SignBit16) {
         flags |= Flag::Overflow;
+    }
     return result;
 }
 
@@ -49,11 +53,13 @@ uint16_t AluShift(ShiftKind kind, uint16_t value, unsigned amount, uint8_t& flag
         if (kind == ShiftKind::Left) {
             carry = (value >> (WordBits - amount)) & 1;
             result = static_cast<uint16_t>(value << amount);
-        } else {
+        }
+        else {
             carry = (value >> (amount - 1)) & 1;
             result = static_cast<uint16_t>(value >> amount);
-            if (kind == ShiftKind::RightArithmetic && (value & SignBit16))
+            if (kind == ShiftKind::RightArithmetic && (value & SignBit16)) {
                 result |= static_cast<uint16_t>(0xFFFFu << (WordBits - amount));
+            }
         }
         flags = static_cast<uint8_t>((flags & ~Flag::Carry) | (carry ? Flag::Carry : 0));
     }

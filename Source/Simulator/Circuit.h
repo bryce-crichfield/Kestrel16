@@ -68,8 +68,12 @@ struct PrimitiveInfo {
 
 extern const PrimitiveInfo Primitives[PrimitiveCount];
 
-inline bool IsPrimitive(NodeKind kind) { return static_cast<int>(kind) < PrimitiveCount; }
-inline bool IsMemory(NodeKind kind) { return kind == NodeKind::Rom || kind == NodeKind::Ram; }
+inline bool IsPrimitive(NodeKind kind) {
+    return static_cast<int>(kind) < PrimitiveCount;
+}
+inline bool IsMemory(NodeKind kind) {
+    return kind == NodeKind::Rom || kind == NodeKind::Ram;
+}
 
 constexpr int TerminalControlPins = 4;  // RS, /CE, /OE, /WE; then D0-D7 in
 constexpr int TerminalDataBits = 8;
@@ -94,16 +98,17 @@ struct MemoryData {
     int dataBits = 8;
     std::vector<uint32_t> words = std::vector<uint32_t>(16, 0);  // always 2^addressBits long
     std::vector<std::string> addressNames, dataNames;            // optional pin names; "" means A0, D0, ...
-    std::string image;  // a binary file the contents come from, relative to the components directory
-    int lane = 0;       // 0: every byte of image; 1: only its even bytes; 2: only its odd bytes
+    std::string image;                                           // a binary file the contents come from, relative to the components directory
+    int lane = 0;                                                // 0: every byte of image; 1: only its even bytes; 2: only its odd bytes
 
     uint32_t DataMask() const { return dataBits >= 32 ? 0xFFFFFFFFu : (1u << dataBits) - 1; }
-    void Resize(int newAddressBits, int newDataBits)
-    {
+    void Resize(int newAddressBits, int newDataBits) {
         addressBits = std::clamp(newAddressBits, 1, MaxMemoryAddressBits);
         dataBits = std::clamp(newDataBits, 1, MaxMemoryDataBits);
         words.resize(size_t{1} << addressBits, 0);
-        for (uint32_t& word : words) word &= DataMask();
+        for (uint32_t& word : words) {
+            word &= DataMask();
+        }
         addressNames.resize(static_cast<size_t>(addressBits));
         dataNames.resize(static_cast<size_t>(dataBits));
     }
@@ -112,13 +117,15 @@ struct MemoryData {
 struct Node {
     uint32_t id = 0;
     NodeKind kind = NodeKind::And;
-    std::string typeName;  // for NodeKind::Component: which component this is
-    std::string label;     // for Input/Output: the pin's name
-    int width = 1;         // for Input/Output: how many pins; a bus of N names them label0..labelN-1
-    ImVec2 position{0, 0}; // editor grid-space position, at zoom 1
+    std::string typeName;                // for NodeKind::Component: which component this is
+    std::string label;                   // for Input/Output: the pin's name
+    int width = 1;                       // for Input/Output: how many pins; a bus of N names them label0..labelN-1
+    ImVec2 position{0, 0};               // editor grid-space position, at zoom 1
     std::shared_ptr<MemoryData> memory;  // for NodeKind::Rom and NodeKind::Ram
 
-    enum class Placement { None, Grid, Screen };
+    enum class Placement { None,
+                           Grid,
+                           Screen };
     Placement placement = Placement::Grid;  // tells the editor to move the node on next draw
 };
 
@@ -148,10 +155,12 @@ struct Component {
     ImNodesEditorContext* editor = nullptr;  // keeps this component's pan and selection
     float zoom = 1.0f;
 
-    Node* FindNode(uint32_t id)
-    {
-        for (Node& node : nodes)
-            if (node.id == id) return &node;
+    Node* FindNode(uint32_t id) {
+        for (Node& node : nodes) {
+            if (node.id == id) {
+                return &node;
+            }
+        }
         return nullptr;
     }
     const Node* FindNode(uint32_t id) const { return const_cast<Component*>(this)->FindNode(id); }
@@ -165,7 +174,7 @@ Component* FindComponent(const std::string& name);
 Component* CreateComponent(const std::string& name);
 std::string UniqueComponentName(const std::string& base);
 bool IsValidComponentName(const std::string& name);
-void RenameComponent(Component& component, const std::string& newName);  // and every use of it
+void RenameComponent(Component& component, const std::string& newName);           // and every use of it
 bool Uses(const Component& component, const std::string& target, int depth = 0);  // anywhere inside it?
 
 // ---------------------------------------------------------------------------
@@ -205,8 +214,8 @@ uint32_t AddNode(Component& component, NodeKind kind, const std::string& typeNam
 void Connect(Component& component, uint32_t fromNode, int fromPin, uint32_t toNode, int toPin, int width = 1);
 void RemoveNode(Component& component, uint32_t id);
 void RemoveWire(Component& component, uint32_t id);
-void PruneWires(Component& component);  // drops wires whose pins no longer exist
+void PruneWires(Component& component);                                              // drops wires whose pins no longer exist
 void RemapMemoryWires(Component& component, const Node& node, int oldAddressBits);  // after a ROM or RAM resizes
-void MergeBusWires(Component& component);  // joins wires that run side by side into bus wires
+void MergeBusWires(Component& component);                                           // joins wires that run side by side into bus wires
 
 }  // namespace Kestrel

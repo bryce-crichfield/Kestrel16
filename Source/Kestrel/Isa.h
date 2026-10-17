@@ -85,7 +85,9 @@ struct Slot {
 #undef KestrelSlot
 };
 
-constexpr int SlotOf(uint16_t ioAddress) { return (ioAddress - Address::IoBase) / IoBus::SlotSize; }
+constexpr int SlotOf(uint16_t ioAddress) {
+    return (ioAddress - Address::IoBase) / IoBus::SlotSize;
+}
 static_assert(SlotOf(Address::TimerAcknowledge) == Slot::System && SlotOf(Address::UartStatus) == Slot::Uart,
               "each register sits in its device's slot");
 
@@ -128,10 +130,10 @@ struct Instruction {
     int condition;
     int systemFunction;
     int systemSource;
-    int immediate6;     // sign extended
-    int immediate8;     // zero extended
-    int offset8;        // sign extended, in words
-    int offset12;       // sign extended, in words
+    int immediate6;  // sign extended
+    int immediate8;  // zero extended
+    int offset8;     // sign extended, in words
+    int offset12;    // sign extended, in words
 };
 
 int SignExtend(int value, int bits);
@@ -141,8 +143,7 @@ Instruction Decode(uint16_t word);
 const InstructionInfo* FindInstruction(const Instruction& instruction);
 
 // Where a branch or jump goes: offsets count words from the next instruction.
-inline uint16_t BranchTarget(uint16_t nextAddress, int offsetInWords)
-{
+inline uint16_t BranchTarget(uint16_t nextAddress, int offsetInWords) {
     return static_cast<uint16_t>(nextAddress + offsetInWords * InstructionSize);
 }
 

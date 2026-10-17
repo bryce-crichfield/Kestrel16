@@ -27,8 +27,8 @@
 namespace Kestrel {
 
 struct CompileOptions {
-    std::vector<std::string> includePaths;                       // searched for #include, in order
-    std::vector<std::pair<std::string, std::string>> defines;    // name, value: as -D name=value
+    std::vector<std::string> includePaths;                     // searched for #include, in order
+    std::vector<std::pair<std::string, std::string>> defines;  // name, value: as -D name=value
 };
 
 struct CompileResult {

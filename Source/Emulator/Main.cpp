@@ -60,10 +60,12 @@ class Console : public Terminal {
     uint8_t byte = 0;
 
     bool Poll() {
-        if (haveByte)
+        if (haveByte) {
             return true;
-        if (endOfFile)
+        }
+        if (endOfFile) {
             return false;
+        }
 #ifdef HavePosixIo
         {
             const int standardInput = 0;
@@ -79,16 +81,18 @@ class Console : public Terminal {
                     haveByte = true;
                     return true;
                 }
-                if (bytesRead == 0)
+                if (bytesRead == 0) {
                     endOfFile = true;
+                }
             }
         }
 #elif defined(HaveWindowsIo)
         if (_isatty(_fileno(stdin))) {
             if (_kbhit()) {
                 int character = _getch();
-                if (character == '\r')
+                if (character == '\r') {
                     character = '\n';
+                }
                 // a console doesn't echo for _getch, so echo like a terminal would
                 if (character == '\n' || (character >= ' ' && character < 127)) {
                     putchar(character);
@@ -102,7 +106,8 @@ class Console : public Terminal {
                 haveByte = true;
                 return true;
             }
-        } else {
+        }
+        else {
             int character = getchar();  // a pipe or file: blocks only until the next byte or EOF
             if (character != EOF) {
                 byte = static_cast<uint8_t>(character);
@@ -112,8 +117,9 @@ class Console : public Terminal {
             endOfFile = true;
         }
 #endif
-        if (endOfFile && stopAtEndOfInput)
+        if (endOfFile && stopAtEndOfInput) {
             inputExhausted = true;
+        }
         return false;
     }
 };
@@ -175,8 +181,9 @@ const char* StepResultName(StepResult result) {
 // Loads a program image at address 0, up to where I/O space starts.
 void LoadImage(Machine& machine, const std::vector<uint8_t>& image, const std::string& name) {
     size_t count = std::min(image.size(), static_cast<size_t>(Address::IoBase));
-    if (image.size() > count)
+    if (image.size() > count) {
         fprintf(stderr, "warning: %s is larger than %d bytes, truncated\n", name.c_str(), Address::IoBase);
+    }
     std::copy(image.begin(), image.begin() + static_cast<long>(count), machine.memory.begin());
 }
 
@@ -190,8 +197,9 @@ void TraceLine(const Machine& machine, const StepInfo& info) {
 }
 
 void DumpRegisters(const Cpu& cpu) {
-    for (int index = 0; index < RegisterCount; index++)
+    for (int index = 0; index < RegisterCount; index++) {
         fprintf(stderr, "r%d=%04X%s", index, cpu.registers[index], index == 3 ? "\n" : "  ");
+    }
     auto flag = [&](uint8_t bit) { return (cpu.flags & bit) ? 1 : 0; };
     fprintf(stderr, "\nflags: Z=%d N=%d C=%d V=%d\n", flag(Flag::Zero), flag(Flag::Negative), flag(Flag::Carry),
             flag(Flag::Overflow));
@@ -206,64 +214,78 @@ int main(int argc, char** argv) {
 
     for (int index = 1; index < argc; index++) {
         const char* argument = argv[index];
-        if (!strcmp(argument, "-t"))
+        if (!strcmp(argument, "-t")) {
             trace = true;
-        else if (!strcmp(argument, "-x"))
+        }
+        else if (!strcmp(argument, "-x")) {
             dump = true;
-        else if (!strcmp(argument, "-n") && index + 1 < argc)
+        }
+        else if (!strcmp(argument, "-n") && index + 1 < argc) {
             stepLimit = strtoull(argv[++index], nullptr, 0), stepLimitGiven = true;
-        else if (!strcmp(argument, "--run") && index + 1 < argc)
+        }
+        else if (!strcmp(argument, "--run") && index + 1 < argc) {
             run = true, fileName = argv[++index];
+        }
         else if (argument[0] == '-') {
             Usage(argv[0]);
             return 2;
-        } else
+        }
+        else {
             fileName = argument;
+        }
     }
 
     Console console;
     Machine machine(console);
     if (run) {
         console.stopAtEndOfInput = true;
-        if (!stepLimitGiven)
+        if (!stepLimitGiven) {
             stepLimit = 0;
+        }
         std::vector<uint8_t> image;
-        if (!BuildProgram(fileName, image, stderr))
+        if (!BuildProgram(fileName, image, stderr)) {
             return 2;
+        }
         LoadImage(machine, image, fileName);
-    } else if (!fileName.empty()) {
+    }
+    else if (!fileName.empty()) {
         std::vector<uint8_t> image;
         if (!ReadFile(fileName, image)) {
             perror(fileName.c_str());
             return 1;
         }
         LoadImage(machine, image, fileName);
-    } else {
+    }
+    else {
         LoadDemo(machine);
     }
 
     StepResult result;
     StepInfo info;
     while ((result = machine.Step(&info)) == StepResult::Running) {
-        if (trace && info.executed)
+        if (trace && info.executed) {
             TraceLine(machine, info);
+        }
         if (stepLimit && machine.cpu.steps >= stepLimit) {
             result = StepResult::LimitReached;
             break;
         }
-        if (console.inputExhausted)
+        if (console.inputExhausted) {
             break;
+        }
     }
-    if (result == StepResult::Illegal)
+    if (result == StepResult::Illegal) {
         fprintf(stderr, "\nillegal instruction 0x%04X at 0x%04X\n", info.word, info.address);
+    }
     fflush(stdout);
 
     fprintf(stderr, "[%s after %llu steps, pc=0x%04X]\n",
             console.inputExhausted && result == StepResult::Running ? "end of input" : StepResultName(result),
             machine.cpu.steps, machine.cpu.programCounter);
 
-    if (dump)
+    if (dump) {
         DumpRegisters(machine.cpu);
+    }
 
     return result == StepResult::Illegal ? 1 : 0;
 }
