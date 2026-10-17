@@ -1,6 +1,7 @@
 // Expressions.cpp -- C expressions: parsed, typed as they are built, and evaluated when constant.
 
-#include "CompilerInternal.h"
+#include "Expressions.h"
+#include "Parser.h"
 
 #include <cstdint>
 

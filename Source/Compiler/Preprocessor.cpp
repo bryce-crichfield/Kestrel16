@@ -1,11 +1,12 @@
 // Preprocessor.cpp -- #include, #define, #if and friends: C source text to C source text.
 
-#include "CompilerInternal.h"
+#include "Preprocessor.h"
 #include "Kestrel/Files.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <set>
 
 namespace Kestrel::Compiler {
 

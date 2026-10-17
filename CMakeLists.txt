@@ -150,7 +150,7 @@ add_library(KestrelAssemblerCore STATIC Source/Assembler/Assembler.cpp)
 target_link_libraries(KestrelAssemblerCore PUBLIC KestrelCore)
 
 add_library(KestrelCompilerCore STATIC
-    Source/Compiler/CodeGenerator.cpp
+    Source/Compiler/Generator.cpp
     Source/Compiler/Compiler.cpp
     Source/Compiler/Expressions.cpp
     Source/Compiler/Lexer.cpp

@@ -1,10 +1,11 @@
 // Lexer.cpp -- preprocessed C text to tokens.
 
-#include "CompilerInternal.h"
+#include "Lexer.h"
 
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <set>
 
 namespace Kestrel::Compiler {
 

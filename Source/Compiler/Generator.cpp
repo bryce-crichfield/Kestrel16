@@ -1,4 +1,4 @@
-// CodeGenerator.cpp -- a function's syntax tree to Kestrel16 assembly.
+// Generator.cpp -- a function's syntax tree to Kestrel16 assembly.
 //
 // Code generation model
 //
@@ -14,7 +14,8 @@
 //   *, /, % are done by small runtime routines appended only when used.
 //   Global C names get a leading '_' so they never clash with register names.
 
-#include "CompilerInternal.h"
+#include "Generator.h"
+#include "Parser.h"
 
 #include <cstdarg>
 #include <cstdio>
@@ -743,7 +744,7 @@ void GenerateFunction(Var* function, Node* body, int frameSize) {
     code += ".Lframe" + std::to_string(functionId) + " = " + std::to_string(AlignUp(frameSize, 2)) + "\n";
 }
 
-void ResetCodeGenerator() {
+void ResetGenerator() {
     code.clear();
     useMultiply = useDivide = useMemcpy = useMemzero = false;
     breakLabels.clear();

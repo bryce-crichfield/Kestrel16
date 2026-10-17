@@ -1,9 +1,12 @@
 // Parser.cpp -- declarations, initializers and statements; each function is handed to the code
 // generator as soon as its body is parsed.
 
-#include "CompilerInternal.h"
+#include "Parser.h"
+#include "Expressions.h"
+#include "Generator.h"
 
 #include <functional>
+#include <set>
 
 namespace Kestrel::Compiler {
 

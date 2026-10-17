@@ -16,7 +16,7 @@
 // value (struct assignment works), designated initializers, 32-bit long,
 // compound literals, VLAs.
 //
-// How the generated code uses the machine is described in CodeGenerator.cpp.
+// How the generated code uses the machine is described in Generator.cpp.
 
 #pragma once
 

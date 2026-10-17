@@ -46,7 +46,7 @@ Dependencies point downward only. Nothing in `KestrelCore` knows about the assem
 
 4. **Public headers vs internal headers.**
    - `Compiler.h`, `Assembler.h`, `Toolchain.h`, `Editor.h`, `HeadlessRun.h` and `Checks.h` are interfaces.
-   - `CompilerInternal.h` and `EditorInternal.h` are shared *only* inside their own directory. Don't include them from elsewhere.
+   - The compiler's stage headers (`Lexer.h`, `Parser.h`, `Generator.h` and the rest in `Source/Compiler/`) and `EditorInternal.h` are shared *only* inside their own directory. Don't include them from elsewhere.
 
 5. **Namespaces.** Everything is in `Kestrel`. The compiler's internals are in `Kestrel::Compiler`, because its `Node`, `Type` and `Symbol` would otherwise collide with the simulator's types in the same executable. File-local helpers are `static` or in an anonymous namespace. Don't export a name that only one file uses.
 

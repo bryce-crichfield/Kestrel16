@@ -1,6 +1,6 @@
 // Types.cpp -- C types, and the nodes of the syntax tree.
 
-#include "CompilerInternal.h"
+#include "Types.h"
 
 namespace Kestrel::Compiler {
 

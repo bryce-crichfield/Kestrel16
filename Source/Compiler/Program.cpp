@@ -1,8 +1,10 @@
 // Program.cpp -- the whole assembly program: start-up code, the generated functions, the runtime
 // routines they use, and the data.
 
-#include "CompilerInternal.h"
+#include "Program.h"
+#include "Generator.h"
 #include "Kestrel/Isa.h"
+#include "Parser.h"
 
 #include <cstdio>
 

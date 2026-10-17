@@ -1,8 +1,24 @@
 // Compiler.cpp -- Compile() and Preprocess(): resets the compiler and runs its stages.
+//
+// The compiler runs in stages, one file (and header) each:
+//   Preprocessor.cpp   text -> text, with # <line> "<file>" markers
+//   Lexer.cpp          text -> tokens
+//   Parser.cpp         tokens -> declarations and statements (AST), function by function
+//   Expressions.cpp    the expressions, typed as they are built, and constant evaluation
+//   Types.cpp          C types and syntax tree nodes
+//   Generator.cpp      each function's AST -> assembly, as soon as it is parsed
+//   Program.cpp        the whole program: start-up code, functions, runtime routines, data
+// Their state is file-level, so a compile is not thread-safe; Compile() resets it first.
 
 #include "Compiler.h"
 
-#include "CompilerInternal.h"
+#include "Errors.h"
+#include "Generator.h"
+#include "Lexer.h"
+#include "Parser.h"
+#include "Preprocessor.h"
+#include "Program.h"
+#include "Types.h"
 
 #include <cstdarg>
 #include <cstdio>
@@ -31,7 +47,7 @@ string Start(const string& name, const string& text, const CompileOptions& optio
     warnings.clear();
     ResetPreprocessor();
     ResetParser();
-    ResetCodeGenerator();
+    ResetGenerator();
     includePaths = options.includePaths;
     for (const auto& [macro, value] : options.defines) {
         macros[macro].body = PPTokens(value);
