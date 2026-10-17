@@ -101,8 +101,13 @@ static uint8_t BusLevel(const Simulation& simulation, const std::vector<int>& ne
         anyHigh |= level == High;
         allFloating &= level == Floating;
     }
-    return allFloating ? Floating : anyHigh ? High
-                                            : Low;
+    if (allFloating) {
+        return Floating;
+    }
+    if (anyHigh) {
+        return High;
+    }
+    return Low;
 }
 
 std::vector<int> PinNets(const Simulation& simulation, uint32_t node, bool output, int first, int count) {

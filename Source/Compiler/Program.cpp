@@ -123,27 +123,27 @@ static const char* RuntimeMemzero = R"(
 
 static string DataSection() {
     string out = "\n; ---- data\n";
-    for (Var* g : globals) {
-        if (g->type->kind == KindFunction || !g->isDefined) {
+    for (Var* global : globals) {
+        if (global->type->kind == KindFunction || !global->isDefined) {
             continue;
         }
-        int size = g->type->size;
-        if (g->type->kind == KindArray && g->type->length < 0) {
-            warnings.push_back(sourceName + ": warning: array '" + g->name + "' has no size; assuming one element");
-            size = g->type->base->size;
+        int size = global->type->size;
+        if (global->type->kind == KindArray && global->type->length < 0) {
+            warnings.push_back(sourceName + ": warning: array '" + global->name + "' has no size; assuming one element");
+            size = global->type->base->size;
         }
         if (size == 0) {
             size = 1;
         }
-        if (g->type->align >= 2) {
+        if (global->type->align >= 2) {
             out += "    .align 2\n";
         }
-        out += g->label + ":\n";
-        if (!g->hasInit) {
+        out += global->label + ":\n";
+        if (!global->hasInit) {
             out += "    .space " + std::to_string(size) + "\n";
             continue;
         }
-        g->data.resize(size, 0);
+        global->data.resize(size, 0);
         string bytes;
         int count = 0;
         auto flush = [&]() {
@@ -153,26 +153,32 @@ static string DataSection() {
             bytes.clear();
             count = 0;
         };
-        for (int i = 0; i < size;) {
-            auto it = g->relocations.find(i);
-            if (it != g->relocations.end()) {
+        for (int offset = 0; offset < size;) {
+            auto relocation = global->relocations.find(offset);
+            if (relocation != global->relocations.end()) {
+                const string& label = relocation->second.first;
+                int addend = relocation->second.second;
                 flush();
-                out += "    .word " + it->second.first;
-                if (it->second.second) {
-                    out += (it->second.second > 0 ? "+" : "") + std::to_string(it->second.second);
+                out += "    .word " + label;
+                if (addend > 0) {
+                    out += "+" + std::to_string(addend);
+                }
+                else if (addend < 0) {
+                    out += std::to_string(addend);  // the minus sign comes with the number
                 }
                 out += "\n";
-                i += 2;
+                offset += 2;
                 continue;
             }
             if (count) {
                 bytes += ", ";
             }
-            bytes += std::to_string(g->data[i]);
-            if (++count == 16) {
-                flush();
+            bytes += std::to_string(global->data[offset]);
+            count++;
+            if (count == 16) {
+                flush();  // 16 bytes per .byte line
             }
-            i++;
+            offset++;
         }
         flush();
     }

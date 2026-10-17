@@ -20,23 +20,23 @@ static const char* Punctuators[] = {
     "+", "-", "*", "/", "%", "&", "|", "^", "~", "!", "<", ">", "=", "?", ":", ";", ",",
     ".", "(", ")", "[", "]", "{", "}"};
 
-static int HexValue(char c) {
-    if (c >= '0' && c <= '9') {
-        return c - '0';
+static int HexValue(char digit) {
+    if (digit >= '0' && digit <= '9') {
+        return digit - '0';
     }
-    if (c >= 'a' && c <= 'f') {
-        return c - 'a' + 10;
+    if (digit >= 'a' && digit <= 'f') {
+        return digit - 'a' + 10;
     }
-    if (c >= 'A' && c <= 'F') {
-        return c - 'A' + 10;
+    if (digit >= 'A' && digit <= 'F') {
+        return digit - 'A' + 10;
     }
     return -1;
 }
 
-static int ReadEscape(const string& src, size_t& i, int line) {
-    // src[i] is the character after the backslash
-    char c = src[i++];
-    switch (c) {
+static int ReadEscape(const string& source, size_t& index, int line) {
+    // source[index] is the character after the backslash
+    char escape = source[index++];
+    switch (escape) {
         case 'n':
             return '\n';
         case 't':
@@ -63,8 +63,8 @@ static int ReadEscape(const string& src, size_t& i, int line) {
             return '?';
         case 'x': {
             int value = 0, digits = 0;
-            while (i < src.size() && HexValue(src[i]) >= 0) {
-                value = value * 16 + HexValue(src[i++]);
+            while (index < source.size() && HexValue(source[index]) >= 0) {
+                value = value * 16 + HexValue(source[index++]);
                 digits++;
             }
             if (!digits) {
@@ -73,197 +73,203 @@ static int ReadEscape(const string& src, size_t& i, int line) {
             return value & 0xFF;
         }
         default:
-            if (c >= '0' && c <= '7') {
-                int value = c - '0', digits = 1;
-                while (digits < 3 && i < src.size() && src[i] >= '0' && src[i] <= '7') {
-                    value = value * 8 + (src[i++] - '0');
+            if (escape >= '0' && escape <= '7') {
+                int value = escape - '0', digits = 1;
+                while (digits < 3 && index < source.size() && source[index] >= '0' && source[index] <= '7') {
+                    value = value * 8 + (source[index++] - '0');
                     digits++;
                 }
                 return value & 0xFF;
             }
-            Fatal(line, "unknown escape '\\%c'", c);
+            Fatal(line, "unknown escape '\\%c'", escape);
     }
 }
 
-vector<Token> Lex(const string& src) {
+vector<Token> Lex(const string& source) {
     vector<Token> tokens;
-    size_t i = 0;
+    size_t index = 0;
     int line = 1;
     bool lineStart = true;
 
-    while (i < src.size()) {
-        char c = src[i];
-        if (c == '\n') {
+    while (index < source.size()) {
+        char character = source[index];
+        if (character == '\n') {
             line++;
-            i++;
+            index++;
             lineStart = true;
             continue;
         }
-        if (isspace((unsigned char)c)) {
-            i++;
+        if (isspace((unsigned char)character)) {
+            index++;
             continue;
         }
-        if (c == '/' && i + 1 < src.size() && src[i + 1] == '/') {
-            while (i < src.size() && src[i] != '\n') {
-                i++;
+        if (character == '/' && index + 1 < source.size() && source[index + 1] == '/') {
+            while (index < source.size() && source[index] != '\n') {
+                index++;
             }
             continue;
         }
-        if (c == '/' && i + 1 < src.size() && src[i + 1] == '*') {
+        if (character == '/' && index + 1 < source.size() && source[index + 1] == '*') {
             int startLine = line;
-            i += 2;
-            while (i + 1 < src.size() && !(src[i] == '*' && src[i + 1] == '/')) {
-                if (src[i] == '\n') {
+            index += 2;
+            while (index + 1 < source.size() && !(source[index] == '*' && source[index + 1] == '/')) {
+                if (source[index] == '\n') {
                     line++;
                 }
-                i++;
+                index++;
             }
-            if (i + 1 >= src.size()) {
+            if (index + 1 >= source.size()) {
                 Fatal(startLine, "unterminated comment");
             }
-            i += 2;
+            index += 2;
             continue;
         }
-        if (c == '#' && lineStart) {  // a line marker from Preprocess(): # <line> "<file>"
-            size_t end = src.find('\n', i);
-            string marker = src.substr(i, end == string::npos ? string::npos : end - i);
-            size_t open = marker.find('"'), close = marker.rfind('"');
+        if (character == '#' && lineStart) {  // a line marker from Preprocess(): # <line> "<file>"
+            size_t end = source.find('\n', index);
+            if (end == string::npos) {
+                end = source.size();
+            }
+            string marker = source.substr(index, end - index);
+            size_t open = marker.find('"');
+            size_t close = marker.rfind('"');
             if (open == string::npos || close <= open) {
                 Fatal(line, "malformed line marker");
             }
-            line = Location(marker.substr(open + 1, close - open - 1), atoi(marker.c_str() + 1)) - 1;
-            i = end == string::npos ? src.size() : end;
+            string file = marker.substr(open + 1, close - open - 1);
+            int markerLine = atoi(marker.c_str() + 1);
+            line = Location(file, markerLine) - 1;  // the newline ending the marker adds the 1 back
+            index = end;
             continue;
         }
         lineStart = false;
 
-        Token tok;
-        tok.line = line;
+        Token token;
+        token.line = line;
 
-        if (isdigit((unsigned char)c)) {
+        if (isdigit((unsigned char)character)) {
             unsigned long long value = 0;
-            if (c == '0' && i + 1 < src.size() && (src[i + 1] == 'x' || src[i + 1] == 'X')) {
-                i += 2;
-                if (HexValue(src[i]) < 0) {
+            if (character == '0' && index + 1 < source.size() && (source[index + 1] == 'x' || source[index + 1] == 'X')) {
+                index += 2;
+                if (HexValue(source[index]) < 0) {
                     Fatal(line, "malformed hex number");
                 }
-                while (i < src.size() && HexValue(src[i]) >= 0) {
-                    value = value * 16 + HexValue(src[i++]);
+                while (index < source.size() && HexValue(source[index]) >= 0) {
+                    value = value * 16 + HexValue(source[index++]);
                 }
             }
-            else if (c == '0' && i + 1 < src.size() && (src[i + 1] == 'b' || src[i + 1] == 'B')) {
-                i += 2;
-                while (i < src.size() && (src[i] == '0' || src[i] == '1')) {
-                    value = value * 2 + (src[i++] - '0');
+            else if (character == '0' && index + 1 < source.size() && (source[index + 1] == 'b' || source[index + 1] == 'B')) {
+                index += 2;
+                while (index < source.size() && (source[index] == '0' || source[index] == '1')) {
+                    value = value * 2 + (source[index++] - '0');
                 }
             }
-            else if (c == '0') {
-                while (i < src.size() && src[i] >= '0' && src[i] <= '7') {
-                    value = value * 8 + (src[i++] - '0');
+            else if (character == '0') {
+                while (index < source.size() && source[index] >= '0' && source[index] <= '7') {
+                    value = value * 8 + (source[index++] - '0');
                 }
             }
             else {
-                while (i < src.size() && isdigit((unsigned char)src[i])) {
-                    value = value * 10 + (src[i++] - '0');
+                while (index < source.size() && isdigit((unsigned char)source[index])) {
+                    value = value * 10 + (source[index++] - '0');
                 }
             }
-            if (i < src.size() && (src[i] == '.' || src[i] == 'e' || src[i] == 'E')) {
+            if (index < source.size() && (source[index] == '.' || source[index] == 'e' || source[index] == 'E')) {
                 Fatal(line, "floating point is not supported");
             }
             bool isUnsigned = false;
-            while (i < src.size() && strchr("uUlL", src[i])) {
-                if (src[i] == 'u' || src[i] == 'U') {
+            while (index < source.size() && strchr("uUlL", source[index])) {
+                if (source[index] == 'u' || source[index] == 'U') {
                     isUnsigned = true;
                 }
-                i++;
+                index++;
             }
-            if (i < src.size() && (isalnum((unsigned char)src[i]) || src[i] == '_')) {
+            if (index < source.size() && (isalnum((unsigned char)source[index]) || source[index] == '_')) {
                 Fatal(line, "malformed number");
             }
             if (value > 0xFFFF) {
                 Fatal(line, "constant %llu does not fit in 16 bits", value);
             }
-            tok.kind = TokNumber;
-            tok.value = (long long)value;
-            tok.isUnsigned = isUnsigned || value > 0x7FFF;
-            tokens.push_back(tok);
+            token.kind = TokNumber;
+            token.value = (long long)value;
+            token.isUnsigned = isUnsigned || value > 0x7FFF;  // too big for int, so it is unsigned
+            tokens.push_back(token);
             continue;
         }
-        if (c == '\'') {
-            i++;
-            if (i >= src.size() || src[i] == '\'' || src[i] == '\n') {
+        if (character == '\'') {
+            index++;
+            if (index >= source.size() || source[index] == '\'' || source[index] == '\n') {
                 Fatal(line, "empty character literal");
             }
             int value;
-            if (src[i] == '\\') {
-                i++;
-                value = ReadEscape(src, i, line);
+            if (source[index] == '\\') {
+                index++;
+                value = ReadEscape(source, index, line);
             }
             else {
-                value = (unsigned char)src[i++];
+                value = (unsigned char)source[index++];
             }
-            if (i >= src.size() || src[i] != '\'') {
+            if (index >= source.size() || source[index] != '\'') {
                 Fatal(line, "unterminated character literal");
             }
-            i++;
-            tok.kind = TokNumber;
-            tok.value = (signed char)value;  // char is signed
-            tokens.push_back(tok);
+            index++;
+            token.kind = TokNumber;
+            token.value = (signed char)value;  // char is signed
+            tokens.push_back(token);
             continue;
         }
-        if (c == '"') {
-            i++;
+        if (character == '"') {
+            index++;
             string bytes;
-            while (i < src.size() && src[i] != '"') {
-                if (src[i] == '\n') {
+            while (index < source.size() && source[index] != '"') {
+                if (source[index] == '\n') {
                     Fatal(line, "unterminated string");
                 }
-                if (src[i] == '\\') {
-                    i++;
-                    bytes += (char)ReadEscape(src, i, line);
+                if (source[index] == '\\') {
+                    index++;
+                    bytes += (char)ReadEscape(source, index, line);
                 }
                 else {
-                    bytes += src[i++];
+                    bytes += source[index++];
                 }
             }
-            if (i >= src.size()) {
+            if (index >= source.size()) {
                 Fatal(line, "unterminated string");
             }
-            i++;
+            index++;
             if (!tokens.empty() && tokens.back().kind == TokString) {
                 tokens.back().text += bytes;  // "abc" "def" concatenation
                 continue;
             }
-            tok.kind = TokString;
-            tok.text = bytes;
-            tokens.push_back(tok);
+            token.kind = TokString;
+            token.text = bytes;
+            tokens.push_back(token);
             continue;
         }
-        if (isalpha((unsigned char)c) || c == '_') {
-            size_t start = i;
-            while (i < src.size() && (isalnum((unsigned char)src[i]) || src[i] == '_')) {
-                i++;
+        if (isalpha((unsigned char)character) || character == '_') {
+            size_t start = index;
+            while (index < source.size() && (isalnum((unsigned char)source[index]) || source[index] == '_')) {
+                index++;
             }
-            tok.text = src.substr(start, i - start);
-            tok.kind = Keywords.count(tok.text) ? TokKeyword : TokIdent;
-            tokens.push_back(tok);
+            token.text = source.substr(start, index - start);
+            token.kind = Keywords.count(token.text) ? TokKeyword : TokIdent;
+            tokens.push_back(token);
             continue;
         }
         bool found = false;
-        for (const char* p : Punctuators) {
-            size_t length = strlen(p);
-            if (src.compare(i, length, p) == 0) {
-                tok.kind = TokPunct;
-                tok.text = p;
-                i += length;
+        for (const char* punctuator : Punctuators) {
+            size_t length = strlen(punctuator);
+            if (source.compare(index, length, punctuator) == 0) {
+                token.kind = TokPunct;
+                token.text = punctuator;
+                index += length;
                 found = true;
                 break;
             }
         }
         if (!found) {
-            Fatal(line, "unexpected character '%c'", c);
+            Fatal(line, "unexpected character '%c'", character);
         }
-        tokens.push_back(tok);
+        tokens.push_back(token);
     }
     Token eof;
     eof.kind = TokEof;

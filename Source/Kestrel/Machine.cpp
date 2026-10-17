@@ -115,7 +115,10 @@ bool Machine::CanWake() {
     if (!cpu.interruptsEnabled) {
         return false;
     }
-    return ((cpu.interruptMask & TimerBit) && (cpu.timerReload || cpu.timerPending)) || (cpu.interruptMask & UartBit);
+    // The timer can only wake the CPU while it is running or has already fired.
+    bool timerCanFire = (cpu.interruptMask & TimerBit) && (cpu.timerReload || cpu.timerPending);
+    bool uartCanFire = cpu.interruptMask & UartBit;
+    return timerCanFire || uartCanFire;
 }
 
 uint8_t Machine::PackFlags() const {
@@ -129,69 +132,72 @@ void Machine::EnterException(uint16_t returnAddress) {
 }
 
 // Returns false for an illegal function code.
-bool Machine::ExecuteAlu(const Instruction& in) {
-    uint16_t a = cpu.registers[in.sourceA], b = cpu.registers[in.sourceB], result;
-    unsigned shiftAmount = b & ShiftAmountMask;
+bool Machine::ExecuteAlu(const Instruction& instruction) {
+    uint16_t operandA = cpu.registers[instruction.sourceA];
+    uint16_t operandB = cpu.registers[instruction.sourceB];
+    uint16_t result;
+    unsigned shiftAmount = operandB & ShiftAmountMask;
 
-    switch (static_cast<AluFunction>(in.function)) {
+    switch (static_cast<AluFunction>(instruction.function)) {
         case AluFunction::Add:
-            result = AluAdd(a, b, 0, cpu.flags);
+            result = AluAdd(operandA, operandB, 0, cpu.flags);
             break;
         case AluFunction::Subtract:
-            result = AluSubtract(a, b, 1, cpu.flags);
+            result = AluSubtract(operandA, operandB, 1, cpu.flags);
             break;
         case AluFunction::And:
-            result = AluLogic(a & b, cpu.flags);
+            result = AluLogic(operandA & operandB, cpu.flags);
             break;
         case AluFunction::Or:
-            result = AluLogic(a | b, cpu.flags);
+            result = AluLogic(operandA | operandB, cpu.flags);
             break;
         case AluFunction::Xor:
-            result = AluLogic(a ^ b, cpu.flags);
+            result = AluLogic(operandA ^ operandB, cpu.flags);
             break;
         case AluFunction::ShiftLeft:
-            result = AluShift(ShiftKind::Left, a, shiftAmount, cpu.flags);
+            result = AluShift(ShiftKind::Left, operandA, shiftAmount, cpu.flags);
             break;
         case AluFunction::ShiftRightLogical:
-            result = AluShift(ShiftKind::RightLogical, a, shiftAmount, cpu.flags);
+            result = AluShift(ShiftKind::RightLogical, operandA, shiftAmount, cpu.flags);
             break;
         case AluFunction::ShiftRightArithmetic:
-            result = AluShift(ShiftKind::RightArithmetic, a, shiftAmount, cpu.flags);
+            result = AluShift(ShiftKind::RightArithmetic, operandA, shiftAmount, cpu.flags);
             break;
         default:
             return false;
     }
-    cpu.registers[in.destination] = result;
+    cpu.registers[instruction.destination] = result;
     return true;
 }
 
 // Returns false for an illegal function code.
-bool Machine::ExecuteAlu2(const Instruction& in) {
-    uint16_t a = cpu.registers[in.sourceA], b = cpu.registers[in.sourceB];
+bool Machine::ExecuteAlu2(const Instruction& instruction) {
+    uint16_t operandA = cpu.registers[instruction.sourceA];
+    uint16_t operandB = cpu.registers[instruction.sourceB];
     unsigned carryIn = (cpu.flags & Flag::Carry) != 0;
-    uint16_t& destination = cpu.registers[in.destination];
+    uint16_t& destination = cpu.registers[instruction.destination];
 
-    switch (static_cast<Alu2Function>(in.function)) {
+    switch (static_cast<Alu2Function>(instruction.function)) {
         case Alu2Function::AddWithCarry:
-            destination = AluAdd(a, b, carryIn, cpu.flags);
+            destination = AluAdd(operandA, operandB, carryIn, cpu.flags);
             break;
         case Alu2Function::SubtractWithCarry:
-            destination = AluSubtract(a, b, carryIn, cpu.flags);
+            destination = AluSubtract(operandA, operandB, carryIn, cpu.flags);
             break;
         case Alu2Function::Compare:
-            AluSubtract(a, b, 1, cpu.flags);
+            AluSubtract(operandA, operandB, 1, cpu.flags);
             break;
         case Alu2Function::Move:
-            destination = a;
+            destination = operandA;
             break;
         case Alu2Function::Not:
-            destination = AluLogic(static_cast<uint16_t>(~a), cpu.flags);
+            destination = AluLogic(static_cast<uint16_t>(~operandA), cpu.flags);
             break;
         case Alu2Function::Negate:
-            destination = AluSubtract(0, a, 1, cpu.flags);
+            destination = AluSubtract(0, operandA, 1, cpu.flags);
             break;
         case Alu2Function::SignExtendByte:
-            destination = AluLogic(SignExtendByte(a), cpu.flags);
+            destination = AluLogic(SignExtendByte(operandA), cpu.flags);
             break;
         default:
             return false;
@@ -200,13 +206,13 @@ bool Machine::ExecuteAlu2(const Instruction& in) {
 }
 
 // Updates nextAddress for control transfers. Returns false for an illegal function code.
-bool Machine::ExecuteSystem(const Instruction& in, uint16_t& nextAddress) {
-    switch (static_cast<SystemFunction>(in.systemFunction)) {
+bool Machine::ExecuteSystem(const Instruction& instruction, uint16_t& nextAddress) {
+    switch (static_cast<SystemFunction>(instruction.systemFunction)) {
         case SystemFunction::JumpRegister:
-            nextAddress = cpu.registers[in.systemSource];
+            nextAddress = cpu.registers[instruction.systemSource];
             break;
         case SystemFunction::JumpAndLinkRegister: {
-            uint16_t target = cpu.registers[in.systemSource];
+            uint16_t target = cpu.registers[instruction.systemSource];
             cpu.registers[LinkRegister] = nextAddress;
             nextAddress = target;
             break;
@@ -235,8 +241,8 @@ bool Machine::ExecuteSystem(const Instruction& in, uint16_t& nextAddress) {
     return true;
 }
 
-uint16_t Machine::EffectiveAddress(const Instruction& in) const {
-    return static_cast<uint16_t>(cpu.registers[in.sourceA] + in.immediate6);
+uint16_t Machine::EffectiveAddress(const Instruction& instruction) const {
+    return static_cast<uint16_t>(cpu.registers[instruction.sourceA] + instruction.immediate6);
 }
 
 StepResult Machine::Step(StepInfo* info) {
@@ -257,57 +263,57 @@ StepResult Machine::Step(StepInfo* info) {
     uint16_t address = cpu.programCounter & WordAlignMask;
     uint16_t word = ReadMemoryWord(address);
     uint16_t nextAddress = static_cast<uint16_t>(address + InstructionSize);
-    Instruction in = Decode(word);
+    Instruction instruction = Decode(word);
     bool legal = true;
     if (info) {
         *info = {true, address, word};
     }
 
-    switch (in.opcode) {
+    switch (instruction.opcode) {
         case Opcode::Alu:
-            legal = ExecuteAlu(in);
+            legal = ExecuteAlu(instruction);
             break;
         case Opcode::Alu2:
-            legal = ExecuteAlu2(in);
+            legal = ExecuteAlu2(instruction);
             break;
         case Opcode::AddImmediate:
-            cpu.registers[in.destination] = AluAdd(cpu.registers[in.sourceA], static_cast<uint16_t>(in.immediate6), 0, cpu.flags);
+            cpu.registers[instruction.destination] = AluAdd(cpu.registers[instruction.sourceA], static_cast<uint16_t>(instruction.immediate6), 0, cpu.flags);
             break;
         case Opcode::LoadImmediate:
-            cpu.registers[in.destination] = static_cast<uint16_t>(in.immediate8);
+            cpu.registers[instruction.destination] = static_cast<uint16_t>(instruction.immediate8);
             break;
         case Opcode::LoadHighImmediate:
-            cpu.registers[in.destination] = static_cast<uint16_t>((cpu.registers[in.destination] & ByteMask) | (in.immediate8 << 8));
+            cpu.registers[instruction.destination] = static_cast<uint16_t>((cpu.registers[instruction.destination] & ByteMask) | (instruction.immediate8 << 8));
             break;
         case Opcode::LoadWord:
-            cpu.registers[in.destination] = ReadWord(EffectiveAddress(in));
+            cpu.registers[instruction.destination] = ReadWord(EffectiveAddress(instruction));
             break;
         case Opcode::StoreWord:
-            WriteWord(EffectiveAddress(in), cpu.registers[in.destination]);
+            WriteWord(EffectiveAddress(instruction), cpu.registers[instruction.destination]);
             break;
         case Opcode::LoadByte:
-            cpu.registers[in.destination] = ReadByte(EffectiveAddress(in));
+            cpu.registers[instruction.destination] = ReadByte(EffectiveAddress(instruction));
             break;
         case Opcode::StoreByte:
-            WriteByte(EffectiveAddress(in), static_cast<uint8_t>(cpu.registers[in.destination] & ByteMask));
+            WriteByte(EffectiveAddress(instruction), static_cast<uint8_t>(cpu.registers[instruction.destination] & ByteMask));
             break;
         case Opcode::Branch:
-            if (ConditionHolds(in.condition, cpu.flags)) {
-                nextAddress = BranchTarget(nextAddress, in.offset8);
+            if (ConditionHolds(instruction.condition, cpu.flags)) {
+                nextAddress = BranchTarget(nextAddress, instruction.offset8);
             }
             break;
         case Opcode::Jump:
-            nextAddress = BranchTarget(nextAddress, in.offset12);
+            nextAddress = BranchTarget(nextAddress, instruction.offset12);
             break;
         case Opcode::JumpAndLink:
             cpu.registers[LinkRegister] = nextAddress;
-            nextAddress = BranchTarget(nextAddress, in.offset12);
+            nextAddress = BranchTarget(nextAddress, instruction.offset12);
             break;
         case Opcode::System:
-            legal = ExecuteSystem(in, nextAddress);
+            legal = ExecuteSystem(instruction, nextAddress);
             break;
         case Opcode::CompareImmediate:
-            AluSubtract(cpu.registers[in.sourceA], static_cast<uint16_t>(in.immediate6), 1, cpu.flags);
+            AluSubtract(cpu.registers[instruction.sourceA], static_cast<uint16_t>(instruction.immediate6), 1, cpu.flags);
             break;
         default:
             legal = false;

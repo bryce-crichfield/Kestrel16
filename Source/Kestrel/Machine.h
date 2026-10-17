@@ -77,10 +77,10 @@ class Machine {
     bool CanWake();                            // could an interrupt still end a HALT?
     uint8_t PackFlags() const;
     void EnterException(uint16_t returnAddress);
-    bool ExecuteAlu(const Instruction& in);
-    bool ExecuteAlu2(const Instruction& in);
-    bool ExecuteSystem(const Instruction& in, uint16_t& nextAddress);
-    uint16_t EffectiveAddress(const Instruction& in) const;
+    bool ExecuteAlu(const Instruction& instruction);
+    bool ExecuteAlu2(const Instruction& instruction);
+    bool ExecuteSystem(const Instruction& instruction, uint16_t& nextAddress);
+    uint16_t EffectiveAddress(const Instruction& instruction) const;
 };
 
 }  // namespace Kestrel

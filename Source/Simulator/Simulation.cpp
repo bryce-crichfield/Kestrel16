@@ -403,8 +403,20 @@ static int Settle(Simulation& simulation, bool edgesEnabled = true) {
                 if (terminal.readRegister && simulation.keys.empty()) {
                     simulation.keysWanted = true;
                 }
-                int byte = registerNow ? (simulation.keys.empty() ? 0 : 1) | 2  // status: key waiting, ready to print
-                                       : (simulation.keys.empty() ? 0 : simulation.keys.front());
+                bool keyWaiting = !simulation.keys.empty();
+                int byte;
+                if (registerNow) {
+                    byte = 2;  // status: bit 1 = ready to print, bit 0 = key waiting
+                    if (keyWaiting) {
+                        byte |= 1;
+                    }
+                }
+                else if (keyWaiting) {
+                    byte = simulation.keys.front();
+                }
+                else {
+                    byte = 0;
+                }
                 for (int bit = 0; bit < TerminalDataBits; bit++) {
                     drive(terminal.data[static_cast<size_t>(bit)], (byte >> bit) & 1);
                 }

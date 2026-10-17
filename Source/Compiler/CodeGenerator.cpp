@@ -42,40 +42,41 @@ static void Emit(const char* format, ...) {
 static void EmitLabel(const string& name) {
     code += name + ":\n";
 }
-static string LabelName(int n) {
-    return ".L" + std::to_string(n);
+static string LabelName(int number) {
+    return ".L" + std::to_string(number);
 }
 static int NewLabel() {
     return ++labelCounter;
 }
-static bool Fits6(long long v) {
-    return v >= -32 && v <= 31;
+static bool Fits6(long long value) {
+    return value >= -32 && value <= 31;
 }
 
-static string MemoryOperand(const char* reg, int off) {
+static string MemoryOperand(const char* reg, int offset) {
     char buffer[32];
-    if (off == 0) {
+    if (offset == 0) {
         snprintf(buffer, sizeof buffer, "[%s]", reg);
     }
     else {
-        snprintf(buffer, sizeof buffer, "[%s%+d]", reg, off);
+        snprintf(buffer, sizeof buffer, "[%s%+d]", reg, offset);
     }
     return buffer;
 }
 
-// rd = ra + v  (uses r3 as scratch for big constants; rd/ra must not be r3)
-static void AddConstant(const char* rd, const char* ra, long long v) {
-    if (v == 0) {
-        if (strcmp(rd, ra)) {
+// rd = ra + value  (uses r3 as scratch for big constants; rd/ra must not be r3)
+static void AddConstant(const char* rd, const char* ra, long long value) {
+    if (value == 0) {
+        bool sameRegister = strcmp(rd, ra) == 0;
+        if (!sameRegister) {
             Emit("mov %s, %s", rd, ra);
         }
         return;
     }
-    if (Fits6(v)) {
-        Emit("addi %s, %s, %lld", rd, ra, v);
+    if (Fits6(value)) {
+        Emit("addi %s, %s, %lld", rd, ra, value);
         return;
     }
-    Emit("li r3, %lld", v & 0xFFFF);
+    Emit("li r3, %lld", value & 0xFFFF);
     Emit("add %s, %s, r3", rd, ra);
 }
 
@@ -84,18 +85,18 @@ static void CallRuntime(const char* name) {
     Emit("jalr r4");
 }
 
-// r0 = value at [reg+off] (off must fit in 6 bits). Aggregates yield their address.
-static void EmitLoad(Type* t, const char* reg, int off) {
-    switch (t->kind) {
+// r0 = value at [reg+offset] (offset must fit in 6 bits). Aggregates yield their address.
+static void EmitLoad(Type* type, const char* reg, int offset) {
+    switch (type->kind) {
         case KindArray:
         case KindFunction:
         case KindStruct:
-            AddConstant("r0", reg, off);
+            AddConstant("r0", reg, offset);
             return;
         case KindChar:
         case KindBool:
-            Emit("lb r0, %s", MemoryOperand(reg, off).c_str());
-            if (t->isUnsigned) {
+            Emit("lb r0, %s", MemoryOperand(reg, offset).c_str());
+            if (type->isUnsigned) {
                 Emit("li r3, 255");
                 Emit("and r0, r0, r3");
             }
@@ -104,17 +105,17 @@ static void EmitLoad(Type* t, const char* reg, int off) {
             }
             return;
         default:
-            Emit("lw r0, %s", MemoryOperand(reg, off).c_str());
+            Emit("lw r0, %s", MemoryOperand(reg, offset).c_str());
     }
 }
 
-// [reg+off] = r0
-static void EmitStore(Type* t, const char* reg, int off) {
-    if (t->kind == KindChar || t->kind == KindBool) {
-        Emit("sb r0, %s", MemoryOperand(reg, off).c_str());
+// [reg+offset] = r0
+static void EmitStore(Type* type, const char* reg, int offset) {
+    if (type->kind == KindChar || type->kind == KindBool) {
+        Emit("sb r0, %s", MemoryOperand(reg, offset).c_str());
     }
     else {
-        Emit("sw r0, %s", MemoryOperand(reg, off).c_str());
+        Emit("sw r0, %s", MemoryOperand(reg, offset).c_str());
     }
 }
 
@@ -166,52 +167,56 @@ static void BranchIfTrue(int label) {
     EmitLabel(LabelName(skip));
 }
 
-static void GenerateExpression(Node* n);
+static void GenerateExpression(Node* node);
 
-static bool IsLocalDirect(Node* n, int* off) {
-    if (n->kind != NodeVar || !n->var->isLocal) {
+static bool IsLocalDirect(Node* node, int* offset) {
+    if (node->kind != NodeVar || !node->var->isLocal) {
         return false;
     }
-    *off = n->var->offset + (int)n->value;
-    return Fits6(*off);
+    *offset = node->var->offset + (int)node->value;
+    return Fits6(*offset);
 }
 
 // r0 = address of the lvalue n
-static void GenerateAddress(Node* n) {
-    switch (n->kind) {
+static void GenerateAddress(Node* node) {
+    switch (node->kind) {
         case NodeVar:
-            if (n->var->isLocal) {
-                AddConstant("r0", "r5", n->var->offset + n->value);
+            if (node->var->isLocal) {
+                AddConstant("r0", "r5", node->var->offset + node->value);
             }
-            else if (n->value) {
-                Emit("la r0, %s+%lld", n->var->label.c_str(), n->value);
+            else if (node->value) {
+                Emit("la r0, %s+%lld", node->var->label.c_str(), node->value);
             }
             else {
-                Emit("la r0, %s", n->var->label.c_str());
+                Emit("la r0, %s", node->var->label.c_str());
             }
             return;
         case NodeDeref:
-            GenerateExpression(n->a);
+            GenerateExpression(node->operand);
             return;
         case NodeMember:
-            GenerateAddress(n->a);
-            AddConstant("r0", "r0", n->member->offset);
+            GenerateAddress(node->operand);
+            AddConstant("r0", "r0", node->member->offset);
             return;
         default:
-            if (n->type->kind == KindStruct) {
-                GenerateExpression(n);
+            if (node->type->kind == KindStruct) {
+                GenerateExpression(node);
                 return;
             }
-            Fatal(n->line, "expression is not an lvalue");
+            Fatal(node->line, "expression is not an lvalue");
     }
 }
 
-static bool IsPowerOfTwo(long long v, int* shift) {
-    if (v <= 0 || (v & (v - 1))) {
+static bool IsPowerOfTwo(long long value, int* shift) {
+    if (value <= 0) {
+        return false;
+    }
+    bool hasOneBitSet = (value & (value - 1)) == 0;  // clearing the lowest set bit leaves nothing
+    if (!hasOneBitSet) {
         return false;
     }
     *shift = 0;
-    while ((1LL << *shift) != v) {
+    while ((1LL << *shift) != value) {
         (*shift)++;
     }
     return true;
@@ -280,26 +285,31 @@ static void ApplyOperator(NodeKind op, bool isUnsigned, Node* constantRight) {
         case NodeLe: {
             int yes = NewLabel(), done = NewLabel();
             Emit("cmp r0, r1");
-            string y = LabelName(yes);
+            string yesLabel = LabelName(yes);
             if (op == NodeEq) {
-                Emit("beq %s", y.c_str());
+                Emit("beq %s", yesLabel.c_str());
             }
             else if (op == NodeNe) {
-                Emit("bne %s", y.c_str());
+                Emit("bne %s", yesLabel.c_str());
             }
             else if (op == NodeLt) {
-                Emit("%s %s", isUnsigned ? "bltu" : "blt", y.c_str());
+                if (isUnsigned) {
+                    Emit("bltu %s", yesLabel.c_str());
+                }
+                else {
+                    Emit("blt %s", yesLabel.c_str());
+                }
             }
             else if (isUnsigned) {
-                Emit("bltu %s", y.c_str());
-                Emit("beq %s", y.c_str());
+                Emit("bltu %s", yesLabel.c_str());
+                Emit("beq %s", yesLabel.c_str());
             }
             else {
-                Emit("ble %s", y.c_str());
+                Emit("ble %s", yesLabel.c_str());
             }
             Emit("li r0, 0");
             Emit("bra %s", LabelName(done).c_str());
-            EmitLabel(y);
+            EmitLabel(yesLabel);
             Emit("li r0, 1");
             EmitLabel(LabelName(done));
             return;
@@ -316,50 +326,50 @@ static void MemoryCopy(int size) {
     CallRuntime(".rt_memcpy");
 }
 
-static void GenerateExpression(Node* n) {
-    int off;
-    switch (n->kind) {
+static void GenerateExpression(Node* node) {
+    int offset;
+    switch (node->kind) {
         case NodeNumber:
-            Emit("li r0, %lld", n->value & 0xFFFF);
+            Emit("li r0, %lld", node->value & 0xFFFF);
             return;
 
         case NodeVar:
-            if (IsLocalDirect(n, &off) && IsScalar(n->type)) {
-                EmitLoad(n->type, "r5", off);
+            if (IsLocalDirect(node, &offset) && IsScalar(node->type)) {
+                EmitLoad(node->type, "r5", offset);
                 return;
             }
-            GenerateAddress(n);
-            EmitLoad(n->type, "r0", 0);
+            GenerateAddress(node);
+            EmitLoad(node->type, "r0", 0);
             return;
 
         case NodeMember:
         case NodeDeref:
-            GenerateAddress(n);
-            EmitLoad(n->type, "r0", 0);
+            GenerateAddress(node);
+            EmitLoad(node->type, "r0", 0);
             return;
 
         case NodeAddr:
-            GenerateAddress(n->a);
+            GenerateAddress(node->operand);
             return;
 
         case NodeCast:
-            GenerateExpression(n->a);
-            EmitCast(n->a->type, n->type);
+            GenerateExpression(node->operand);
+            EmitCast(node->operand->type, node->type);
             return;
 
         case NodeNeg:
-            GenerateExpression(n->a);
+            GenerateExpression(node->operand);
             Emit("neg r0, r0");
             return;
 
         case NodeBitNot:
-            GenerateExpression(n->a);
+            GenerateExpression(node->operand);
             Emit("not r0, r0");
             return;
 
         case NodeNot: {
             int yes = NewLabel(), done = NewLabel();
-            GenerateExpression(n->a);
+            GenerateExpression(node->operand);
             Emit("cmpi r0, 0");
             Emit("beq %s", LabelName(yes).c_str());
             Emit("li r0, 0");
@@ -372,9 +382,9 @@ static void GenerateExpression(Node* n) {
 
         case NodeLogAnd: {
             int no = NewLabel(), done = NewLabel();
-            GenerateExpression(n->a);
+            GenerateExpression(node->left);
             BranchIfFalse(no);
-            GenerateExpression(n->b);
+            GenerateExpression(node->right);
             BranchIfFalse(no);
             Emit("li r0, 1");
             Emit("j %s", LabelName(done).c_str());
@@ -386,9 +396,9 @@ static void GenerateExpression(Node* n) {
 
         case NodeLogOr: {
             int yes = NewLabel(), done = NewLabel();
-            GenerateExpression(n->a);
+            GenerateExpression(node->left);
             BranchIfTrue(yes);
-            GenerateExpression(n->b);
+            GenerateExpression(node->right);
             BranchIfTrue(yes);
             Emit("li r0, 0");
             Emit("j %s", LabelName(done).c_str());
@@ -400,19 +410,19 @@ static void GenerateExpression(Node* n) {
 
         case NodeCond: {
             int otherwise = NewLabel(), done = NewLabel();
-            GenerateExpression(n->a);
+            GenerateExpression(node->condition);
             BranchIfFalse(otherwise);
-            GenerateExpression(n->b);
+            GenerateExpression(node->then);
             Emit("j %s", LabelName(done).c_str());
             EmitLabel(LabelName(otherwise));
-            GenerateExpression(n->c);
+            GenerateExpression(node->otherwise);
             EmitLabel(LabelName(done));
             return;
         }
 
         case NodeComma:
-            GenerateExpression(n->a);
-            GenerateExpression(n->b);
+            GenerateExpression(node->left);
+            GenerateExpression(node->right);
             return;
 
         case NodeAdd:
@@ -429,30 +439,34 @@ static void GenerateExpression(Node* n) {
         case NodeNe:
         case NodeLt:
         case NodeLe: {
-            GenerateExpression(n->a);
-            Node* constant = n->b->kind == NodeNumber ? n->b : nullptr;
+            GenerateExpression(node->left);
+            // a constant right operand is loaded directly, and lets * / % use shifts
+            Node* constant = nullptr;
+            if (node->right->kind == NodeNumber) {
+                constant = node->right;
+            }
             if (constant) {
                 Emit("li r1, %lld", constant->value & 0xFFFF);
             }
             else {
                 Emit("push r0");
-                GenerateExpression(n->b);
+                GenerateExpression(node->right);
                 Emit("mov r1, r0");
                 Emit("pop r0");
             }
-            ApplyOperator(n->kind, n->opUnsigned, constant);
+            ApplyOperator(node->kind, node->opUnsigned, constant);
             return;
         }
 
         case NodePtrDiff: {
-            GenerateExpression(n->a);
+            GenerateExpression(node->left);
             Emit("push r0");
-            GenerateExpression(n->b);
+            GenerateExpression(node->right);
             Emit("mov r1, r0");
             Emit("pop r0");
             Emit("sub r0, r0, r1");
             int shift;
-            if (IsPowerOfTwo(n->value, &shift)) {
+            if (IsPowerOfTwo(node->value, &shift)) {
                 if (shift) {
                     Emit("li r1, %d", shift);
                     Emit("sar r0, r0, r1");
@@ -460,76 +474,81 @@ static void GenerateExpression(Node* n) {
             }
             else {
                 useDivide = true;
-                Emit("li r1, %lld", n->value);
+                Emit("li r1, %lld", node->value);
                 CallRuntime(".rt_divs");
             }
             return;
         }
 
         case NodeAssign:
-            if (n->type->kind == KindStruct) {
-                GenerateAddress(n->a);
+            if (node->type->kind == KindStruct) {
+                GenerateAddress(node->left);
                 Emit("push r0");
-                GenerateAddress(n->b);
+                GenerateAddress(node->right);
                 Emit("pop r1");
-                MemoryCopy(n->type->size);
+                MemoryCopy(node->type->size);
                 return;
             }
-            if (IsLocalDirect(n->a, &off)) {
-                GenerateExpression(n->b);
-                EmitCast(n->b->type, n->a->type);
-                EmitStore(n->a->type, "r5", off);
+            if (IsLocalDirect(node->left, &offset)) {
+                GenerateExpression(node->right);
+                EmitCast(node->right->type, node->left->type);
+                EmitStore(node->left->type, "r5", offset);
                 return;
             }
-            GenerateAddress(n->a);
+            GenerateAddress(node->left);
             Emit("push r0");
-            GenerateExpression(n->b);
-            EmitCast(n->b->type, n->a->type);
+            GenerateExpression(node->right);
+            EmitCast(node->right->type, node->left->type);
             Emit("pop r1");
-            EmitStore(n->a->type, "r1", 0);
+            EmitStore(node->left->type, "r1", 0);
             return;
 
-        case NodeCompound:
-            GenerateAddress(n->a);
+        case NodeCompound: {
+            GenerateAddress(node->left);
             Emit("push r0");
-            EmitLoad(n->a->type, "r0", 0);
+            EmitLoad(node->left->type, "r0", 0);
             Emit("push r0");
-            GenerateExpression(n->b);
+            GenerateExpression(node->right);
             Emit("mov r1, r0");
             Emit("pop r0");
-            ApplyOperator(n->op, n->opUnsigned, n->b->kind == NodeNumber ? n->b : nullptr);
-            EmitCast(TypeInt, n->a->type);
+            Node* constant = nullptr;
+            if (node->right->kind == NodeNumber) {
+                constant = node->right;
+            }
+            ApplyOperator(node->op, node->opUnsigned, constant);
+            EmitCast(TypeInt, node->left->type);
             Emit("pop r1");
-            EmitStore(n->a->type, "r1", 0);
+            EmitStore(node->left->type, "r1", 0);
             return;
+        }
 
         case NodeIncDec:
-            GenerateAddress(n->a);
+            GenerateAddress(node->operand);
             Emit("mov r1, r0");
-            EmitLoad(n->a->type, "r1", 0);
-            if (n->isPost) {
+            EmitLoad(node->operand->type, "r1", 0);
+            if (node->isPost) {
                 Emit("mov r2, r0");
             }
-            AddConstant("r0", "r0", n->value);
-            EmitCast(TypeInt, n->a->type);
-            EmitStore(n->a->type, "r1", 0);
-            if (n->isPost) {
+            AddConstant("r0", "r0", node->value);
+            EmitCast(TypeInt, node->operand->type);
+            EmitStore(node->operand->type, "r1", 0);
+            if (node->isPost) {
                 Emit("mov r0, r2");
             }
             return;
 
         case NodeCall: {
-            int count = (int)n->list.size();
+            int count = (int)node->list.size();
             for (int i = count - 1; i >= 0; i--) {
-                GenerateExpression(n->list[i]);
+                GenerateExpression(node->list[i]);
                 Emit("push r0");
             }
-            Node* fn = n->a;
-            if (fn->kind == NodeVar && fn->var->type->kind == KindFunction) {
-                Emit("la r4, %s", fn->var->label.c_str());
+            Node* callee = node->callee;
+            if (callee->kind == NodeVar && callee->var->type->kind == KindFunction) {
+                Emit("la r4, %s", callee->var->label.c_str());
             }
             else {
-                GenerateExpression(fn);
+                GenerateExpression(callee);
                 Emit("mov r4, r0");
             }
             Emit("jalr r4");
@@ -541,39 +560,42 @@ static void GenerateExpression(Node* n) {
 
         case NodeZero:
             useMemzero = true;
-            AddConstant("r0", "r5", n->var->offset);
-            Emit("li r1, %d", n->var->type->size);
+            AddConstant("r0", "r5", node->var->offset);
+            Emit("li r1, %d", node->var->type->size);
             CallRuntime(".rt_memzero");
             return;
 
         default:
-            Fatal(n->line, "internal error: unexpected node in expression");
+            Fatal(node->line, "internal error: unexpected node in expression");
     }
 }
 
-static void GenerateStatement(Node* n) {
-    switch (n->kind) {
+static void GenerateStatement(Node* node) {
+    switch (node->kind) {
         case NodeBlock:
-            for (Node* s : n->list) {
-                GenerateStatement(s);
+            for (Node* statement : node->list) {
+                GenerateStatement(statement);
             }
             return;
 
         case NodeExprStmt:
+            GenerateExpression(node->expression);
+            return;
+
         case NodeZero:
-            GenerateExpression(n->kind == NodeZero ? n : n->a);
+            GenerateExpression(node);
             return;
 
         case NodeIf: {
             int otherwise = NewLabel();
-            GenerateExpression(n->a);
+            GenerateExpression(node->condition);
             BranchIfFalse(otherwise);
-            GenerateStatement(n->b);
-            if (n->c) {
+            GenerateStatement(node->then);
+            if (node->otherwise) {
                 int done = NewLabel();
                 Emit("j %s", LabelName(done).c_str());
                 EmitLabel(LabelName(otherwise));
-                GenerateStatement(n->c);
+                GenerateStatement(node->otherwise);
                 EmitLabel(LabelName(done));
             }
             else {
@@ -587,9 +609,9 @@ static void GenerateStatement(Node* n) {
             breakLabels.push_back(done);
             continueLabels.push_back(top);
             EmitLabel(LabelName(top));
-            GenerateExpression(n->a);
+            GenerateExpression(node->condition);
             BranchIfFalse(done);
-            GenerateStatement(n->b);
+            GenerateStatement(node->body);
             Emit("j %s", LabelName(top).c_str());
             EmitLabel(LabelName(done));
             breakLabels.pop_back();
@@ -602,9 +624,9 @@ static void GenerateStatement(Node* n) {
             breakLabels.push_back(done);
             continueLabels.push_back(next);
             EmitLabel(LabelName(top));
-            GenerateStatement(n->b);
+            GenerateStatement(node->body);
             EmitLabel(LabelName(next));
-            GenerateExpression(n->a);
+            GenerateExpression(node->condition);
             BranchIfTrue(top);
             EmitLabel(LabelName(done));
             breakLabels.pop_back();
@@ -614,20 +636,20 @@ static void GenerateStatement(Node* n) {
 
         case NodeFor: {
             int top = NewLabel(), next = NewLabel(), done = NewLabel();
-            if (n->a) {
-                GenerateStatement(n->a);
+            if (node->init) {
+                GenerateStatement(node->init);
             }
             breakLabels.push_back(done);
             continueLabels.push_back(next);
             EmitLabel(LabelName(top));
-            if (n->b) {
-                GenerateExpression(n->b);
+            if (node->condition) {
+                GenerateExpression(node->condition);
                 BranchIfFalse(done);
             }
-            GenerateStatement(n->d);
+            GenerateStatement(node->body);
             EmitLabel(LabelName(next));
-            if (n->c) {
-                GenerateExpression(n->c);
+            if (node->step) {
+                GenerateExpression(node->step);
             }
             Emit("j %s", LabelName(top).c_str());
             EmitLabel(LabelName(done));
@@ -637,75 +659,80 @@ static void GenerateStatement(Node* n) {
         }
 
         case NodeReturn:
-            if (n->a) {
-                GenerateExpression(n->a);
+            if (node->expression) {
+                GenerateExpression(node->expression);
             }
             Emit("j .Lret%d", functionId);
             return;
 
         case NodeBreak:
             if (breakLabels.empty()) {
-                Fatal(n->line, "'break' outside of a loop or switch");
+                Fatal(node->line, "'break' outside of a loop or switch");
             }
             Emit("j %s", LabelName(breakLabels.back()).c_str());
             return;
 
         case NodeContinue:
             if (continueLabels.empty()) {
-                Fatal(n->line, "'continue' outside of a loop");
+                Fatal(node->line, "'continue' outside of a loop");
             }
             Emit("j %s", LabelName(continueLabels.back()).c_str());
             return;
 
         case NodeSwitch: {
             int done = NewLabel();
-            GenerateExpression(n->a);
-            for (Node* c : n->list) {
+            GenerateExpression(node->condition);
+            for (Node* caseNode : node->list) {
                 int next = NewLabel();
-                Emit("li r1, %lld", c->value & 0xFFFF);
+                Emit("li r1, %lld", caseNode->value & 0xFFFF);
                 Emit("cmp r0, r1");
                 Emit("bne %s", LabelName(next).c_str());
-                Emit("j %s", LabelName(c->label).c_str());
+                Emit("j %s", LabelName(caseNode->label).c_str());
                 EmitLabel(LabelName(next));
             }
-            Emit("j %s", LabelName(n->d ? n->d->label : done).c_str());
+            // no case matched: go to default, or past the switch when there is none
+            int noMatch = done;
+            if (node->defaultCase) {
+                noMatch = node->defaultCase->label;
+            }
+            Emit("j %s", LabelName(noMatch).c_str());
             breakLabels.push_back(done);
-            GenerateStatement(n->b);
+            GenerateStatement(node->body);
             breakLabels.pop_back();
             EmitLabel(LabelName(done));
             return;
         }
 
         case NodeCase:
-            EmitLabel(LabelName(n->label));
-            GenerateStatement(n->a);
+            EmitLabel(LabelName(node->label));
+            GenerateStatement(node->body);
             return;
 
         case NodeGoto:
-            Emit("j .Lgoto%d_%s", functionId, n->name.c_str());
+            Emit("j .Lgoto%d_%s", functionId, node->name.c_str());
             return;
 
         case NodeLabel:
-            EmitLabel(".Lgoto" + std::to_string(functionId) + "_" + n->name);
-            GenerateStatement(n->a);
+            EmitLabel(".Lgoto" + std::to_string(functionId) + "_" + node->name);
+            GenerateStatement(node->body);
             return;
 
         default:
-            Fatal(n->line, "internal error: unexpected statement");
+            Fatal(node->line, "internal error: unexpected statement");
     }
 }
 
-void GenerateFunction(Var* f, Node* body, int frameSize) {
+void GenerateFunction(Var* function, Node* body, int frameSize) {
     functionId++;
-    code += "\n; ---- " + f->name + "\n";
-    EmitLabel(f->label);
+    code += "\n; ---- " + function->name + "\n";
+    EmitLabel(function->label);
     Emit("push lr");
     Emit("push r5");
     Emit("mov r5, sp");
     Emit("li r2, .Lframe%d", functionId);
     Emit("sub sp, sp, r2");
     GenerateStatement(body);
-    if (f->name == "main") {
+    if (function->name == "main") {
         Emit("li r0, 0");
     }
     EmitLabel(".Lret" + std::to_string(functionId));

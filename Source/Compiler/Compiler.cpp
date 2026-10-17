@@ -54,9 +54,9 @@ string CompileText(const string& name, const string& text, const CompileOptions&
     if (mainIt == globalsByName.end() || mainIt->second->type->kind != KindFunction || !mainIt->second->isDefined) {
         Fatal(Tok().line, "no definition of 'main'");
     }
-    for (Var* g : globals) {
-        if (g->type->kind == KindFunction && !g->isDefined) {
-            warnings.push_back(sourceName + ": warning: function '" + g->name + "' is declared but never defined");
+    for (Var* global : globals) {
+        if (global->type->kind == KindFunction && !global->isDefined) {
+            warnings.push_back(sourceName + ": warning: function '" + global->name + "' is declared but never defined");
         }
     }
     return ProgramText();

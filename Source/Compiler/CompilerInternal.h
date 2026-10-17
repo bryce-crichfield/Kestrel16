@@ -56,7 +56,7 @@ struct Macro {
 extern vector<string> includePaths;
 extern std::map<string, Macro> macros;
 
-vector<string> PPTokens(const string& s);
+vector<string> PPTokens(const string& text);
 void Preprocess(const string& file, const string& text, string& out, int depth);
 void ResetPreprocessor();
 
@@ -130,12 +130,12 @@ extern Type* TypeUInt;
 Type* MakeType(Kind kind, int size, int align, bool isUnsigned = false);
 Type* PointerTo(Type* base);
 Type* ArrayOf(Type* base, int length);
-bool IsInteger(Type* t);
-bool IsScalar(Type* t);
-int AlignUp(int n, int a);
-Type* Decay(Type* t);
-Type* Promote(Type* t);
-Type* UsualArithmetic(Type* a, Type* b);
+bool IsInteger(Type* type);
+bool IsScalar(Type* type);
+int AlignUp(int value, int alignment);
+Type* Decay(Type* type);
+Type* Promote(Type* type);
+Type* UsualArithmetic(Type* left, Type* right);
 
 struct Var {
     string name;
@@ -201,8 +201,22 @@ enum NodeKind {
 struct Node {
     NodeKind kind;
     Type* type = nullptr;
-    Node *a = nullptr, *b = nullptr, *c = nullptr, *d = nullptr;
-    vector<Node*> list;
+
+    // Children. Which ones a node uses depends on its kind.
+    Node* left = nullptr;         // binary operators, comparisons, &&, ||, comma, assignments, pointer difference
+    Node* right = nullptr;        //
+    Node* operand = nullptr;      // unary operators, casts, address-of, dereference, member access, ++/--
+    Node* callee = nullptr;       // call (the arguments are in list)
+    Node* expression = nullptr;   // expression statement, return (null for a bare return)
+    Node* condition = nullptr;    // if, ?:, while, do, switch, for (null when omitted)
+    Node* then = nullptr;         // if, ?:
+    Node* otherwise = nullptr;    // ?:, if (null when there is no else)
+    Node* init = nullptr;         // for (null when omitted)
+    Node* step = nullptr;         // for (null when omitted)
+    Node* body = nullptr;         // while, do, for, switch, case, label
+    Node* defaultCase = nullptr;  // switch (null when there is no default)
+    vector<Node*> list;           // block statements, call arguments, switch cases
+
     long long value = 0;  // number, var byte offset, inc delta, case value, ptrdiff size
     Var* var = nullptr;
     Member* member = nullptr;
@@ -235,14 +249,14 @@ extern int labelCounter;  // .L labels: case labels here, the rest in the code g
 extern int stringCounter;
 
 Token& Tok();
-Token& TokAt(size_t i);
-bool IsText(const Token& t, const char* s);
-bool Is(const char* s);
-bool Accept(const char* s);
-void Expect(const char* s);
+Token& TokAt(size_t index);
+bool IsText(const Token& token, const char* text);
+bool Is(const char* text);
+bool Accept(const char* text);
+void Expect(const char* text);
 string ExpectIdent();
 Symbol* FindSymbol(const string& name);
-bool IsTypeToken(const Token& t);
+bool IsTypeToken(const Token& token);
 Type* TypeName();
 void EnterScope();
 void TopLevel();
@@ -255,12 +269,12 @@ Node* Expression();
 Node* Assignment();
 Node* Conditional();
 long long ConstantExpression();
-long long Evaluate(Node* n, string* label = nullptr);
-long long Wrap16(long long v, bool isUnsigned);
-Node* MakeCast(Node* e, Type* t);
+long long Evaluate(Node* node, string* label = nullptr);
+long long Wrap16(long long value, bool isUnsigned);
+Node* MakeCast(Node* expr, Type* type);
 Node* MakeAssign(Node* lhs, Node* rhs, int line);
-void NeedScalar(Node* n, const char* what);
-void NeedInteger(Node* n, const char* what);
+void NeedScalar(Node* node, const char* what);
+void NeedInteger(Node* node, const char* what);
 
 // ---------------------------------------------------------------------------
 // Code generation (CodeGenerator.cpp)
@@ -268,7 +282,7 @@ void NeedInteger(Node* n, const char* what);
 extern string code;
 extern bool useMultiply, useDivide, useMemcpy, useMemzero;
 
-void GenerateFunction(Var* f, Node* body, int frameSize);
+void GenerateFunction(Var* function, Node* body, int frameSize);
 void ResetCodeGenerator();
 
 // ---------------------------------------------------------------------------

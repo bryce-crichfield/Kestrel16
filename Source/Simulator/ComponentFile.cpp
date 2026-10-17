@@ -149,20 +149,30 @@ std::string EndpointText(const Node& node, bool output, int index, int width) {
     }
     auto pinText = [&](int pin) {
         std::string name = PinName(node, output, pin);
-        int count = output ? OutputCount(node) : InputCount(node), matches = 0;
+        int count = output ? OutputCount(node) : InputCount(node);
+        int matches = 0;
         for (int other = 0; other < count; other++) {
             if (PinName(node, output, other) == name) {
                 matches++;
             }
         }
-        bool byName = !name.empty() && name != "?" && matches == 1 && name.find("->") == std::string::npos &&
-                      name.find("..") == std::string::npos;
-        return byName ? name : std::to_string(pin);
+        // A name is only usable when it is unique and can't be mistaken for the "->" and ".."
+        // syntax of the wire text itself.
+        bool hasName = !name.empty() && name != "?";
+        bool isUnique = matches == 1;
+        bool hasWireSyntax = name.find("->") != std::string::npos || name.find("..") != std::string::npos;
+        if (hasName && isUnique && !hasWireSyntax) {
+            return name;
+        }
+        return std::to_string(pin);
     };
-    std::string first = pinText(index), last = pinText(index + width - 1);
+    std::string first = pinText(index);
+    std::string last = pinText(index + width - 1);
     bool numbers = std::isdigit(static_cast<unsigned char>(first[0])) || std::isdigit(static_cast<unsigned char>(last[0]));
     if (numbers) {
-        first = std::to_string(index), last = std::to_string(index + width - 1);  // don't mix the two
+        // don't mix a name and a number
+        first = std::to_string(index);
+        last = std::to_string(index + width - 1);
     }
     return text + "." + first + (width > 1 ? ".." + last : "");
 }
@@ -331,8 +341,15 @@ std::unique_ptr<Component> ComponentFromYaml(const std::string& text) {
             if (!lane.empty() && lane != "even" && lane != "odd") {
                 throw std::runtime_error("node " + std::to_string(node.id) + ": lane is even or odd");
             }
-            rom.lane = lane == "even" ? 1 : lane == "odd" ? 2
-                                                          : 0;
+            if (lane == "even") {
+                rom.lane = 1;
+            }
+            else if (lane == "odd") {
+                rom.lane = 2;
+            }
+            else {
+                rom.lane = 0;
+            }
             if (!rom.image.empty()) {
                 std::string problem = LoadRomImage(rom);
                 if (!problem.empty()) {

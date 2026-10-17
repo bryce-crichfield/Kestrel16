@@ -1000,7 +1000,8 @@ void Assembly::EmitString(const char* text, bool addTerminator) {
     cursor++;
     while (*cursor && *cursor != '"') {
         EmitByte(ParseLiteralCharacter(&cursor));
-        if (++length == MaxStringLength) {
+        length++;
+        if (length == MaxStringLength) {
             Error("string is too long");
             return;
         }

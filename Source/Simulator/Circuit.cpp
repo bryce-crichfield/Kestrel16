@@ -242,29 +242,40 @@ void MergeBusWires(Component& component) {
     };
     std::vector<Wire> singles, result;
     for (const Wire& wire : component.wires) {
-        (wire.width == 1 ? singles : result).push_back(wire);
+        if (wire.width == 1) {
+            singles.push_back(wire);
+        }
+        else {
+            result.push_back(wire);
+        }
     }
     auto offset = [](const Wire& wire) { return static_cast<int64_t>(wire.toPin) - static_cast<int64_t>(wire.fromPin); };
     std::sort(singles.begin(), singles.end(), [&](const Wire& a, const Wire& b) {
         return std::make_tuple(a.fromNode, a.toNode, offset(a), a.fromPin) <
                std::make_tuple(b.fromNode, b.toNode, offset(b), b.fromPin);
     });
-    for (size_t start = 0, end; start < singles.size(); start = end) {
+    size_t start = 0;
+    while (start < singles.size()) {
         const Wire& first = singles[start];
         int fromGroup = groupFirst(first.fromNode, true, first.fromPin);
         int toGroup = groupFirst(first.toNode, false, first.toPin);
-        for (end = start + 1; end < singles.size(); end++) {
-            const Wire& next = singles[end];
-            if (next.fromNode != first.fromNode || next.toNode != first.toNode || offset(next) != offset(first) ||
-                next.fromPin != first.fromPin + (end - start) ||
-                groupFirst(next.fromNode, true, next.fromPin) != fromGroup ||
-                groupFirst(next.toNode, false, next.toPin) != toGroup) {
-                break;
-            }
+        // A wire joins the run when it connects the same two nodes, on the next pin along at
+        // both ends, without crossing into another pin group.
+        auto continuesRun = [&](const Wire& next, size_t position) {
+            bool sameNodes = next.fromNode == first.fromNode && next.toNode == first.toNode;
+            bool nextPin = offset(next) == offset(first) && next.fromPin == first.fromPin + position;
+            bool sameGroups = groupFirst(next.fromNode, true, next.fromPin) == fromGroup &&
+                              groupFirst(next.toNode, false, next.toPin) == toGroup;
+            return sameNodes && nextPin && sameGroups;
+        };
+        size_t end = start + 1;
+        while (end < singles.size() && continuesRun(singles[end], end - start)) {
+            end++;
         }
         Wire merged = first;
         merged.width = static_cast<uint32_t>(end - start);
         result.push_back(merged);
+        start = end;
     }
     std::sort(result.begin(), result.end(), [](const Wire& a, const Wire& b) { return a.id < b.id; });
     component.wires = std::move(result);
@@ -334,9 +345,11 @@ uint32_t AddNode(Component& component, NodeKind kind, const std::string& typeNam
 void Connect(Component& component, uint32_t fromNode, int fromPin, uint32_t toNode, int toPin, int width) {
     auto& wires = component.wires;
     for (const Wire& wire : wires) {
-        if (wire.fromNode == fromNode && wire.fromPin == static_cast<uint32_t>(fromPin) && wire.toNode == toNode &&
-            wire.toPin == static_cast<uint32_t>(toPin) && wire.width == static_cast<uint32_t>(width)) {
-            return;
+        bool sameFrom = wire.fromNode == fromNode && wire.fromPin == static_cast<uint32_t>(fromPin);
+        bool sameTo = wire.toNode == toNode && wire.toPin == static_cast<uint32_t>(toPin);
+        bool sameWidth = wire.width == static_cast<uint32_t>(width);
+        if (sameFrom && sameTo && sameWidth) {
+            return;  // already connected
         }
     }
     Wire wire;
@@ -372,15 +385,17 @@ void RemoveWire(Component& component, uint32_t id) {
 void PruneWires(Component& component) {
     auto& wires = component.wires;
     size_t before = wires.size();
-    wires.erase(std::remove_if(wires.begin(), wires.end(),
-                               [&](const Wire& wire) {
-                                   const Node* from = component.FindNode(wire.fromNode);
-                                   const Node* to = component.FindNode(wire.toNode);
-                                   return !from || !to || wire.width == 0 ||
-                                          static_cast<int>(wire.fromPin + wire.width) > OutputCount(*from) ||
-                                          static_cast<int>(wire.toPin + wire.width) > InputCount(*to);
-                               }),
-                wires.end());
+    auto isBroken = [&](const Wire& wire) {
+        const Node* from = component.FindNode(wire.fromNode);
+        const Node* to = component.FindNode(wire.toNode);
+        if (!from || !to || wire.width == 0) {
+            return true;
+        }
+        bool fromFits = static_cast<int>(wire.fromPin + wire.width) <= OutputCount(*from);
+        bool toFits = static_cast<int>(wire.toPin + wire.width) <= InputCount(*to);
+        return !fromFits || !toFits;
+    };
+    wires.erase(std::remove_if(wires.begin(), wires.end(), isBroken), wires.end());
     if (wires.size() != before) {
         component.dirty = true;
     }

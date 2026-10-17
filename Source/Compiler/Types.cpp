@@ -5,12 +5,12 @@
 namespace Kestrel::Compiler {
 
 Type* MakeType(Kind kind, int size, int align, bool isUnsigned) {
-    Type* t = new Type;
-    t->kind = kind;
-    t->size = size;
-    t->align = align;
-    t->isUnsigned = isUnsigned;
-    return t;
+    Type* type = new Type;
+    type->kind = kind;
+    type->size = size;
+    type->align = align;
+    type->isUnsigned = isUnsigned;
+    return type;
 }
 
 Type* TypeVoid = MakeType(KindVoid, 1, 1);
@@ -21,69 +21,69 @@ Type* TypeInt = MakeType(KindInt, 2, 2);
 Type* TypeUInt = MakeType(KindInt, 2, 2, true);
 
 Type* PointerTo(Type* base) {
-    Type* t = MakeType(KindPointer, 2, 2, true);
-    t->base = base;
-    return t;
+    Type* type = MakeType(KindPointer, 2, 2, true);
+    type->base = base;
+    return type;
 }
 
 Type* ArrayOf(Type* base, int length) {
-    Type* t = MakeType(KindArray, length < 0 ? 0 : base->size * length, base->align);
-    t->base = base;
-    t->length = length;
-    return t;
+    Type* type = MakeType(KindArray, length < 0 ? 0 : base->size * length, base->align);
+    type->base = base;
+    type->length = length;
+    return type;
 }
 
-bool IsInteger(Type* t) {
-    return t->kind == KindBool || t->kind == KindChar || t->kind == KindInt;
+bool IsInteger(Type* type) {
+    return type->kind == KindBool || type->kind == KindChar || type->kind == KindInt;
 }
-bool IsScalar(Type* t) {
-    return IsInteger(t) || t->kind == KindPointer;
+bool IsScalar(Type* type) {
+    return IsInteger(type) || type->kind == KindPointer;
 }
-int AlignUp(int n, int a) {
-    return (n + a - 1) / a * a;
-}
-
-Type* Decay(Type* t) {
-    if (t->kind == KindArray) {
-        return PointerTo(t->base);
-    }
-    if (t->kind == KindFunction) {
-        return PointerTo(t);
-    }
-    return t;
+int AlignUp(int value, int alignment) {
+    return (value + alignment - 1) / alignment * alignment;
 }
 
-Type* Promote(Type* t) {
-    if (t->kind == KindInt) {
-        return t;
+Type* Decay(Type* type) {
+    if (type->kind == KindArray) {
+        return PointerTo(type->base);
     }
-    if (IsInteger(t)) {
+    if (type->kind == KindFunction) {
+        return PointerTo(type);
+    }
+    return type;
+}
+
+Type* Promote(Type* type) {
+    if (type->kind == KindInt) {
+        return type;
+    }
+    if (IsInteger(type)) {
         return TypeInt;
     }
-    return t;
+    return type;
 }
 
-Type* UsualArithmetic(Type* a, Type* b) {
-    a = Promote(a);
-    b = Promote(b);
-    return (a->isUnsigned || b->isUnsigned) ? TypeUInt : TypeInt;
+Type* UsualArithmetic(Type* left, Type* right) {
+    left = Promote(left);
+    right = Promote(right);
+    return (left->isUnsigned || right->isUnsigned) ? TypeUInt : TypeInt;
 }
 
 // ===========================================================================
 // AST nodes
 
 Node* NewNode(NodeKind kind, int line) {
-    Node* n = new Node;
-    n->kind = kind;
-    n->line = line;
-    return n;
+    Node* node = new Node;
+    node->kind = kind;
+    node->line = line;
+    return node;
 }
 
 Node* NewNumber(long long value, int line, Type* type) {
-    Node* n = NewNode(NodeNumber, line);
-    n->value = value;
-    n->type = type;
-    return n;
+    Node* node = NewNode(NodeNumber, line);
+    node->value = value;
+    node->type = type;
+    return node;
 }
 
 }  // namespace Kestrel::Compiler

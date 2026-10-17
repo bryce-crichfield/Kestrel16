@@ -69,7 +69,10 @@ int RunHardwareCheck() {
 
         std::vector<uint16_t> values = {0, 1, 2, 0x7F, 0x80, 0xFF, 0x100, 0x7FFF, 0x8000, 0x8001, 0xFFFE, 0xFFFF};
         uint32_t seed = 12345;
-        auto random = [&] { return seed = seed * 1103515245u + 12345u, static_cast<uint16_t>(seed >> 8); };
+        auto random = [&] {
+            seed = seed * 1103515245u + 12345u;  // a linear congruential generator
+            return static_cast<uint16_t>(seed >> 8);
+        };
         for (int i = 0; i < 40; i++) {
             values.push_back(random());
         }
@@ -92,13 +95,19 @@ int RunHardwareCheck() {
 
                         AluResult expected = ReferenceAlu(op, a, b, carryIn);
                         uint32_t y = ReadBus(simulation, *alu, "Y", 16);
-                        int carry = ReadOutput(simulation, *alu, "C"), overflow = ReadOutput(simulation, *alu, "V");
-                        int zero = ReadOutput(simulation, *alu, "Z"), negative = ReadOutput(simulation, *alu, "N");
+                        int carry = ReadOutput(simulation, *alu, "C");
+                        int overflow = ReadOutput(simulation, *alu, "V");
+                        int zero = ReadOutput(simulation, *alu, "Z");
+                        int negative = ReadOutput(simulation, *alu, "N");
                         AluOperation operation = static_cast<AluOperation>(op);
                         bool adder = operation == AluOperation::Add || operation == AluOperation::Sub || operation == AluOperation::Neg;
-                        if (y != expected.y || (expected.carry >= 0 && carry != expected.carry) || (adder && overflow != expected.overflow) ||
-                            zero != (expected.y == 0) || negative != (expected.y >> 15)) {
-                            if (failures++ < 10) {
+                        // a carry of -1 means the operation leaves C undefined
+                        bool carryWrong = expected.carry >= 0 && carry != expected.carry;
+                        bool overflowWrong = adder && overflow != expected.overflow;
+                        bool flagsWrong = zero != (expected.y == 0) || negative != (expected.y >> 15);
+                        if (y != expected.y || carryWrong || overflowWrong || flagsWrong) {
+                            failures++;
+                            if (failures <= 10) {
                                 printf("  ALU op %d a=%04X b=%04X cin=%d: got Y=%04X C%d V%d Z%d N%d, want Y=%04X C%d V%d\n",
                                        op, a, b, carryIn, y, carry, overflow, zero, negative, expected.y,
                                        expected.carry, expected.overflow);
@@ -119,21 +128,24 @@ int RunHardwareCheck() {
             int op = static_cast<int>(operation);
             for (uint16_t value : values) {
                 for (int amount = 1; amount < 16; amount++) {
-                    uint16_t a = value;
+                    uint16_t shifted = value;
                     int carry = 0;
                     for (int step = 0; step < amount; step++) {
-                        SetBus(simulation, *alu, "A", 16, a);
+                        SetBus(simulation, *alu, "A", 16, shifted);
                         SetBus(simulation, *alu, "OP", 4, op);
                         RecordSettle(simulation);
-                        a = static_cast<uint16_t>(ReadBus(simulation, *alu, "Y", 16));
+                        shifted = static_cast<uint16_t>(ReadBus(simulation, *alu, "Y", 16));
                         carry = ReadOutput(simulation, *alu, "C");
                     }
                     uint8_t flags = 0;
                     uint16_t want = AluShift(kind, value, static_cast<unsigned>(amount), flags);
                     int wantCarry = (flags & Flag::Carry) ? 1 : 0;
-                    if ((a != want || carry != wantCarry) && shiftFailures++ < 10) {
-                        printf("  shift op %d %04X by %d: got %04X C%d, want %04X C%d\n", op, value, amount, a,
-                               carry, want, wantCarry);
+                    if (shifted != want || carry != wantCarry) {
+                        shiftFailures++;
+                        if (shiftFailures <= 10) {
+                            printf("  shift op %d %04X by %d: got %04X C%d, want %04X C%d\n", op, value, amount, shifted,
+                                   carry, want, wantCarry);
+                        }
                     }
                 }
             }
@@ -152,37 +164,49 @@ int RunHardwareCheck() {
 
         uint16_t registers[8];
         uint32_t seed = 777;
-        auto random = [&] { return seed = seed * 1103515245u + 12345u, static_cast<uint16_t>(seed >> 8); };
+        auto random = [&] {
+            seed = seed * 1103515245u + 12345u;  // a linear congruential generator
+            return static_cast<uint16_t>(seed >> 8);
+        };
         auto clock = [&] {
             SetBus(simulation, *file, "CLK", 1, 1);
             RecordSettle(simulation);
             SetBus(simulation, *file, "CLK", 1, 0);
             RecordSettle(simulation);
         };
-        auto write = [&](int r, uint16_t value, int enable) {
-            SetBus(simulation, *file, "W", 3, r);
+        auto write = [&](int registerIndex, uint16_t value, int enable) {
+            SetBus(simulation, *file, "W", 3, registerIndex);
             SetBus(simulation, *file, "D", 16, value);
             SetBus(simulation, *file, "WE", 1, enable);
             RecordSettle(simulation);
             clock();
             if (enable) {
-                registers[r] = value;
+                registers[registerIndex] = value;
             }
         };
-        for (int r = 0; r < 8; r++) {
-            write(r, random(), 1);
+        for (int registerIndex = 0; registerIndex < 8; registerIndex++) {
+            write(registerIndex, random(), 1);
         }
 
         int failures = 0;
         for (int i = 0; i < 2000; i++) {
-            write(random() & 7, random(), (random() & 3) != 0);  // a quarter of the cycles don't write
-            int ra = random() & 7, rb = random() & 7;
+            int writeIndex = random() & 7;
+            uint16_t writeValue = random();
+            bool writeEnable = (random() & 3) != 0;  // a quarter of the cycles don't write
+            write(writeIndex, writeValue, writeEnable);
+
+            int ra = random() & 7;
+            int rb = random() & 7;
             SetBus(simulation, *file, "RA", 3, ra);
             SetBus(simulation, *file, "RB", 3, rb);
             RecordSettle(simulation);
-            uint32_t qa = ReadBus(simulation, *file, "QA", 16), qb = ReadBus(simulation, *file, "QB", 16);
-            if ((qa != registers[ra] || qb != registers[rb]) && failures++ < 10) {
-                printf("  R%d=%04X R%d=%04X: read %04X %04X\n", ra, registers[ra], rb, registers[rb], qa, qb);
+            uint32_t qa = ReadBus(simulation, *file, "QA", 16);
+            uint32_t qb = ReadBus(simulation, *file, "QB", 16);
+            if (qa != registers[ra] || qb != registers[rb]) {
+                failures++;
+                if (failures <= 10) {
+                    printf("  R%d=%04X R%d=%04X: read %04X %04X\n", ra, registers[ra], rb, registers[rb], qa, qb);
+                }
             }
         }
         Check(failures == 0, "Register File keeps R0-R7 like the emulator");
