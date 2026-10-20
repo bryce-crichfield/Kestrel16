@@ -16,7 +16,7 @@
 // value (struct assignment works), designated initializers, 32-bit long,
 // compound literals, VLAs.
 //
-// How the generated code uses the machine is described in CodeGenerator.cpp.
+// How the generated code uses the machine is described in Generator.cpp.
 
 #pragma once
 
@@ -27,8 +27,8 @@
 namespace Kestrel {
 
 struct CompileOptions {
-    std::vector<std::string> includePaths;                       // searched for #include, in order
-    std::vector<std::pair<std::string, std::string>> defines;    // name, value: as -D name=value
+    std::vector<std::string> includePaths;                     // searched for #include, in order
+    std::vector<std::pair<std::string, std::string>> defines;  // name, value: as -D name=value
 };
 
 struct CompileResult {

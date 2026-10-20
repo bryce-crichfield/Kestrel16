@@ -1,6 +1,7 @@
 // Expressions.cpp -- C expressions: parsed, typed as they are built, and evaluated when constant.
 
-#include "CompilerInternal.h"
+#include "Expressions.h"
+#include "Parser.h"
 
 #include <cstdint>
 
@@ -11,607 +12,836 @@ static Node* CastExpression();
 // ===========================================================================
 // Expression construction (with typing)
 
-void NeedScalar(Node* n, const char* what)
-{
-    Type* t = Decay(n->type);
-    if (!IsScalar(t)) Fatal(n->line, "invalid operand to %s", what);
+void NeedScalar(Node* node, const char* what) {
+    Type* type = Decay(node->type);
+    if (!IsScalar(type)) {
+        Fatal(node->line, "invalid operand to %s", what);
+    }
 }
 
-void NeedInteger(Node* n, const char* what)
-{
-    if (!IsInteger(n->type)) Fatal(n->line, "operand of %s must be an integer", what);
+void NeedInteger(Node* node, const char* what) {
+    if (!IsInteger(node->type)) {
+        Fatal(node->line, "operand of %s must be an integer", what);
+    }
 }
 
-Node* MakeCast(Node* e, Type* t)
-{
-    if (t->kind == KindStruct || (e->type->kind == KindStruct && t->kind != KindVoid))
-        Fatal(e->line, "invalid cast involving a struct");
-    Node* n = NewNode(NodeCast, e->line);
-    n->a = e;
-    n->type = t;
-    return n;
+Node* MakeCast(Node* expr, Type* type) {
+    bool castsToStruct = type->kind == KindStruct;
+    bool castsStructToValue = expr->type->kind == KindStruct && type->kind != KindVoid;
+    if (castsToStruct || castsStructToValue) {
+        Fatal(expr->line, "invalid cast involving a struct");
+    }
+    Node* cast = NewNode(NodeCast, expr->line);
+    cast->operand = expr;
+    cast->type = type;
+    return cast;
 }
 
-static Node* MakeBinary(NodeKind kind, Node* a, Node* b, int line, const char* what)
-{
-    NeedInteger(a, what);
-    NeedInteger(b, what);
-    Node* n = NewNode(kind, line);
-    n->a = a;
-    n->b = b;
-    n->type = (kind == NodeShl || kind == NodeShr) ? Promote(a->type) : UsualArithmetic(a->type, b->type);
-    n->opUnsigned = n->type->isUnsigned;
-    return n;
+// The type an integer operator works in. A shift takes its type from the left operand alone;
+// everything else uses the usual arithmetic conversions of both.
+static Type* OperatorType(NodeKind kind, Type* left, Type* right) {
+    if (kind == NodeShl || kind == NodeShr) {
+        return Promote(left);
+    }
+    return UsualArithmetic(left, right);
 }
 
-static int ElementSize(Type* pointer, int line)
-{
+static Node* MakeBinary(NodeKind kind, Node* left, Node* right, int line, const char* what) {
+    NeedInteger(left, what);
+    NeedInteger(right, what);
+    Node* node = NewNode(kind, line);
+    node->left = left;
+    node->right = right;
+    node->type = OperatorType(kind, left->type, right->type);
+    node->opUnsigned = node->type->isUnsigned;
+    return node;
+}
+
+static int ElementSize(Type* pointer, int line) {
     Type* base = pointer->base;
-    if (base->kind == KindVoid || base->kind == KindFunction) return 1;
-    if (base->kind == KindStruct && !base->info->complete) Fatal(line, "arithmetic on pointer to incomplete type");
+    if (base->kind == KindVoid || base->kind == KindFunction) {
+        return 1;
+    }
+    if (base->kind == KindStruct && !base->info->complete) {
+        Fatal(line, "arithmetic on pointer to incomplete type");
+    }
     return base->size;
 }
 
-static Node* Scaled(Node* index, int size)
-{
-    if (size == 1) return index;
-    Node* m = NewNode(NodeMul, index->line);
-    m->a = index;
-    m->b = NewNumber(size, index->line);
-    m->type = TypeInt;
-    return m;
+static Node* Scaled(Node* index, int size) {
+    if (size == 1) {
+        return index;
+    }
+    Node* product = NewNode(NodeMul, index->line);
+    product->left = index;
+    product->right = NewNumber(size, index->line);
+    product->type = TypeInt;
+    return product;
 }
 
-static Node* MakeAdd(Node* a, Node* b, int line)
-{
-    Type* ta = Decay(a->type);
-    Type* tb = Decay(b->type);
-    if (IsInteger(ta) && IsInteger(tb)) return MakeBinary(NodeAdd, a, b, line, "+");
-    if (IsInteger(ta) && tb->kind == KindPointer) { std::swap(a, b); std::swap(ta, tb); }
-    if (ta->kind == KindPointer && IsInteger(tb)) {
-        Node* n = NewNode(NodeAdd, line);
-        n->a = a;
-        n->b = Scaled(b, ElementSize(ta, line));
-        n->type = ta;
-        return n;
+static Node* MakeAdd(Node* left, Node* right, int line) {
+    Type* leftType = Decay(left->type);
+    Type* rightType = Decay(right->type);
+    if (IsInteger(leftType) && IsInteger(rightType)) {
+        return MakeBinary(NodeAdd, left, right, line, "+");
+    }
+    // integer + pointer: put the pointer on the left
+    if (IsInteger(leftType) && rightType->kind == KindPointer) {
+        std::swap(left, right);
+        std::swap(leftType, rightType);
+    }
+    if (leftType->kind == KindPointer && IsInteger(rightType)) {
+        Node* sum = NewNode(NodeAdd, line);
+        sum->left = left;
+        sum->right = Scaled(right, ElementSize(leftType, line));
+        sum->type = leftType;
+        return sum;
     }
     Fatal(line, "invalid operands to +");
 }
 
-static Node* MakeSub(Node* a, Node* b, int line)
-{
-    Type* ta = Decay(a->type);
-    Type* tb = Decay(b->type);
-    if (IsInteger(ta) && IsInteger(tb)) return MakeBinary(NodeSub, a, b, line, "-");
-    if (ta->kind == KindPointer && IsInteger(tb)) {
-        Node* n = NewNode(NodeSub, line);
-        n->a = a;
-        n->b = Scaled(b, ElementSize(ta, line));
-        n->type = ta;
-        return n;
+static Node* MakeSub(Node* left, Node* right, int line) {
+    Type* leftType = Decay(left->type);
+    Type* rightType = Decay(right->type);
+    if (IsInteger(leftType) && IsInteger(rightType)) {
+        return MakeBinary(NodeSub, left, right, line, "-");
     }
-    if (ta->kind == KindPointer && tb->kind == KindPointer) {
-        Node* n = NewNode(NodePtrDiff, line);
-        n->a = a;
-        n->b = b;
-        n->value = ElementSize(ta, line);
-        n->type = TypeInt;
-        return n;
+    if (leftType->kind == KindPointer && IsInteger(rightType)) {
+        Node* difference = NewNode(NodeSub, line);
+        difference->left = left;
+        difference->right = Scaled(right, ElementSize(leftType, line));
+        difference->type = leftType;
+        return difference;
+    }
+    if (leftType->kind == KindPointer && rightType->kind == KindPointer) {
+        Node* difference = NewNode(NodePtrDiff, line);
+        difference->left = left;
+        difference->right = right;
+        difference->value = ElementSize(leftType, line);
+        difference->type = TypeInt;
+        return difference;
     }
     Fatal(line, "invalid operands to -");
 }
 
-static Node* MakeCompare(NodeKind kind, Node* a, Node* b, int line, bool swap)
-{
-    NeedScalar(a, "comparison");
-    NeedScalar(b, "comparison");
-    if (swap) std::swap(a, b);
-    Node* n = NewNode(kind, line);
-    n->a = a;
-    n->b = b;
-    n->type = TypeInt;
-    Type* ta = Decay(a->type);
-    Type* tb = Decay(b->type);
-    n->opUnsigned = ta->kind == KindPointer || tb->kind == KindPointer || UsualArithmetic(ta, tb)->isUnsigned;
-    return n;
+// swap turns > and >= into < and <= with the operands reversed.
+static Node* MakeCompare(NodeKind kind, Node* left, Node* right, int line, bool swap) {
+    NeedScalar(left, "comparison");
+    NeedScalar(right, "comparison");
+    if (swap) {
+        std::swap(left, right);
+    }
+    Node* compare = NewNode(kind, line);
+    compare->left = left;
+    compare->right = right;
+    compare->type = TypeInt;
+
+    Type* leftType = Decay(left->type);
+    Type* rightType = Decay(right->type);
+    if (leftType->kind == KindPointer || rightType->kind == KindPointer) {
+        compare->opUnsigned = true;  // addresses compare unsigned
+    }
+    else {
+        compare->opUnsigned = UsualArithmetic(leftType, rightType)->isUnsigned;
+    }
+    return compare;
 }
 
-static bool IsLvalue(Node* n)
-{
-    return n->kind == NodeVar || n->kind == NodeDeref || n->kind == NodeMember;
+static bool IsLvalue(Node* node) {
+    return node->kind == NodeVar || node->kind == NodeDeref || node->kind == NodeMember;
 }
 
-Node* MakeAssign(Node* lhs, Node* rhs, int line)
-{
-    if (!IsLvalue(lhs)) Fatal(line, "left side of assignment is not assignable");
-    if (lhs->type->kind == KindArray || lhs->type->kind == KindFunction) Fatal(line, "cannot assign to an array or function");
+Node* MakeAssign(Node* lhs, Node* rhs, int line) {
+    if (!IsLvalue(lhs)) {
+        Fatal(line, "left side of assignment is not assignable");
+    }
+    if (lhs->type->kind == KindArray || lhs->type->kind == KindFunction) {
+        Fatal(line, "cannot assign to an array or function");
+    }
     if (lhs->type->kind == KindStruct) {
-        if (rhs->type != lhs->type) Fatal(line, "incompatible struct types in assignment");
-    } else {
+        if (rhs->type != lhs->type) {
+            Fatal(line, "incompatible struct types in assignment");
+        }
+    }
+    else {
         NeedScalar(rhs, "assignment");
     }
-    Node* n = NewNode(NodeAssign, line);
-    n->a = lhs;
-    n->b = rhs;
-    n->type = lhs->type;
-    return n;
+    Node* assign = NewNode(NodeAssign, line);
+    assign->left = lhs;
+    assign->right = rhs;
+    assign->type = lhs->type;
+    return assign;
 }
 
-static Node* MakeDeref(Node* e, int line)
-{
-    Type* t = Decay(e->type);
-    if (t->kind != KindPointer) Fatal(line, "cannot dereference a non-pointer");
-    if (t->base->kind == KindVoid) Fatal(line, "cannot dereference a void pointer");
-    Node* n = NewNode(NodeDeref, line);
-    n->a = e;
-    n->type = t->base;
-    return n;
+static Node* MakeDeref(Node* pointer, int line) {
+    Type* type = Decay(pointer->type);
+    if (type->kind != KindPointer) {
+        Fatal(line, "cannot dereference a non-pointer");
+    }
+    if (type->base->kind == KindVoid) {
+        Fatal(line, "cannot dereference a void pointer");
+    }
+    Node* deref = NewNode(NodeDeref, line);
+    deref->operand = pointer;
+    deref->type = type->base;
+    return deref;
 }
 
-static Node* MakeMember(Node* s, const string& name, int line)
-{
-    if (s->type->kind != KindStruct) Fatal(line, "'.%s' used on something that is not a struct", name.c_str());
-    if (!s->type->info->complete) Fatal(line, "use of incomplete struct");
-    for (Member& m : s->type->info->members) {
-        if (m.name == name) {
-            Node* n = NewNode(NodeMember, line);
-            n->a = s;
-            n->member = &m;
-            n->type = m.type;
-            return n;
+static Node* MakeMember(Node* object, const string& name, int line) {
+    if (object->type->kind != KindStruct) {
+        Fatal(line, "'.%s' used on something that is not a struct", name.c_str());
+    }
+    if (!object->type->info->complete) {
+        Fatal(line, "use of incomplete struct");
+    }
+    for (Member& member : object->type->info->members) {
+        if (member.name == name) {
+            Node* access = NewNode(NodeMember, line);
+            access->operand = object;
+            access->member = &member;
+            access->type = member.type;
+            return access;
         }
     }
     Fatal(line, "no member named '%s'", name.c_str());
 }
 
-static Node* MakeIncDec(Node* e, int delta, bool isPost, int line)
-{
-    if (!IsLvalue(e)) Fatal(line, "operand of ++/-- is not assignable");
-    NeedScalar(e, "++/--");
-    Node* n = NewNode(NodeIncDec, line);
-    n->a = e;
-    n->type = e->type;
-    n->isPost = isPost;
-    n->value = e->type->kind == KindPointer ? delta * ElementSize(e->type, line) : delta;
-    return n;
+static Node* MakeIncDec(Node* target, int delta, bool isPost, int line) {
+    if (!IsLvalue(target)) {
+        Fatal(line, "operand of ++/-- is not assignable");
+    }
+    NeedScalar(target, "++/--");
+    Node* node = NewNode(NodeIncDec, line);
+    node->operand = target;
+    node->type = target->type;
+    node->isPost = isPost;
+    if (target->type->kind == KindPointer) {
+        node->value = delta * ElementSize(target->type, line);  // a pointer steps by whole elements
+    }
+    else {
+        node->value = delta;
+    }
+    return node;
 }
 
-static Var* NewStringVar(const string& bytes)
-{
-    Var* g = new Var;
-    g->label = ".Lstr" + std::to_string(++stringCounter);
-    g->type = ArrayOf(TypeChar, (int)bytes.size() + 1);
-    g->isDefined = true;
-    g->hasInit = true;
-    g->data.assign(bytes.begin(), bytes.end());
-    g->data.push_back(0);
-    globals.push_back(g);
-    return g;
+static Var* NewStringVar(const string& bytes) {
+    Var* literal = new Var;
+    literal->label = ".Lstr" + std::to_string(++stringCounter);
+    literal->type = ArrayOf(TypeChar, (int)bytes.size() + 1);
+    literal->isDefined = true;
+    literal->hasInit = true;
+    literal->data.assign(bytes.begin(), bytes.end());
+    literal->data.push_back(0);
+    globals.push_back(literal);
+    return literal;
 }
 
-static Node* VarNode(Var* v, int line)
-{
-    Node* n = NewNode(NodeVar, line);
-    n->var = v;
-    n->type = v->type;
-    return n;
+static Node* VarNode(Var* var, int line) {
+    Node* node = NewNode(NodeVar, line);
+    node->var = var;
+    node->type = var->type;
+    return node;
 }
 
 // ===========================================================================
 // Expression parsing
 
-static Node* CallExpression(Node* fn, int line)
-{
-    Type* ft = fn->type;
-    if (ft->kind == KindPointer && ft->base->kind == KindFunction) ft = ft->base;
-    if (ft->kind != KindFunction) Fatal(line, "called object is not a function");
-    Node* n = NewNode(NodeCall, line);
-    n->a = fn;
-    n->type = ft->base;
-    if (n->type->kind == KindStruct) Fatal(line, "returning structs by value is not supported (pass a pointer)");
+static Node* CallExpression(Node* callee, int line) {
+    Type* function = callee->type;
+    if (function->kind == KindPointer && function->base->kind == KindFunction) {
+        function = function->base;
+    }
+    if (function->kind != KindFunction) {
+        Fatal(line, "called object is not a function");
+    }
+    Node* call = NewNode(NodeCall, line);
+    call->callee = callee;
+    call->type = function->base;
+    if (call->type->kind == KindStruct) {
+        Fatal(line, "returning structs by value is not supported (pass a pointer)");
+    }
+
+    bool checkArguments = !function->oldStyle;
     if (!Accept(")")) {
         do {
-            Node* arg = Assignment();
-            size_t index = n->list.size();
-            if (arg->type->kind == KindStruct) Fatal(arg->line, "passing structs by value is not supported (pass a pointer)");
-            if (arg->type->kind == KindVoid) Fatal(arg->line, "void value used as an argument");
-            if (!ft->oldStyle && index < ft->params.size()) arg = MakeCast(arg, ft->params[index]);
-            else if (!ft->oldStyle && !ft->variadic) Fatal(arg->line, "too many arguments in call");
-            n->list.push_back(arg);
+            Node* argument = Assignment();
+            size_t index = call->list.size();
+            if (argument->type->kind == KindStruct) {
+                Fatal(argument->line, "passing structs by value is not supported (pass a pointer)");
+            }
+            if (argument->type->kind == KindVoid) {
+                Fatal(argument->line, "void value used as an argument");
+            }
+            if (checkArguments) {
+                if (index < function->params.size()) {
+                    argument = MakeCast(argument, function->params[index]);
+                }
+                else if (!function->variadic) {
+                    Fatal(argument->line, "too many arguments in call");
+                }
+            }
+            call->list.push_back(argument);
         } while (Accept(","));
         Expect(")");
     }
-    if (!ft->oldStyle && n->list.size() < ft->params.size()) Fatal(line, "too few arguments in call");
-    return n;
+    if (checkArguments && call->list.size() < function->params.size()) {
+        Fatal(line, "too few arguments in call");
+    }
+    return call;
 }
 
-static Node* Primary()
-{
-    Token& t = Tok();
-    int line = t.line;
+static Node* Primary() {
+    Token& token = Tok();
+    int line = token.line;
     if (Accept("(")) {
-        Node* e = Expression();
+        Node* expr = Expression();
         Expect(")");
-        return e;
+        return expr;
     }
-    if (t.kind == TokNumber) {
+    if (token.kind == TokNumber) {
         pos++;
-        return NewNumber(t.value, line, t.isUnsigned ? TypeUInt : TypeInt);
+        return NewNumber(token.value, line, token.isUnsigned ? TypeUInt : TypeInt);
     }
-    if (t.kind == TokString) {
+    if (token.kind == TokString) {
         pos++;
-        return VarNode(NewStringVar(t.text), line);
+        return VarNode(NewStringVar(token.text), line);
     }
-    if (t.kind == TokIdent) {
+    if (token.kind == TokIdent) {
         pos++;
-        Symbol* s = FindSymbol(t.text);
-        if (!s || s->typedefType) {
-            if (!s && Is("(")) Fatal(line, "call to undeclared function '%s' (declare a prototype first)", t.text.c_str());
-            Fatal(line, "undeclared identifier '%s'", t.text.c_str());
+        Symbol* symbol = FindSymbol(token.text);
+        if (!symbol) {
+            if (Is("(")) {
+                Fatal(line, "call to undeclared function '%s' (declare a prototype first)", token.text.c_str());
+            }
+            Fatal(line, "undeclared identifier '%s'", token.text.c_str());
         }
-        if (s->isEnumConstant) return NewNumber(s->enumValue, line);
-        return VarNode(s->var, line);
+        if (symbol->typedefType) {
+            Fatal(line, "undeclared identifier '%s'", token.text.c_str());
+        }
+        if (symbol->isEnumConstant) {
+            return NewNumber(symbol->enumValue, line);
+        }
+        return VarNode(symbol->var, line);
     }
-    Fatal(line, "expected an expression but found '%s'", t.text.c_str());
+    Fatal(line, "expected an expression but found '%s'", token.text.c_str());
 }
 
-static Node* Postfix()
-{
-    Node* e = Primary();
+static Node* Postfix() {
+    Node* expr = Primary();
     for (;;) {
         int line = Tok().line;
         if (Accept("[")) {
             Node* index = Expression();
             Expect("]");
-            e = MakeDeref(MakeAdd(e, index, line), line);
-        } else if (Accept("(")) {
-            e = CallExpression(e, line);
-        } else if (Accept(".")) {
-            e = MakeMember(e, ExpectIdent(), line);
-        } else if (Accept("->")) {
-            e = MakeMember(MakeDeref(e, line), ExpectIdent(), line);
-        } else if (Accept("++")) {
-            e = MakeIncDec(e, 1, true, line);
-        } else if (Accept("--")) {
-            e = MakeIncDec(e, -1, true, line);
-        } else {
-            return e;
+            expr = MakeDeref(MakeAdd(expr, index, line), line);
+        }
+        else if (Accept("(")) {
+            expr = CallExpression(expr, line);
+        }
+        else if (Accept(".")) {
+            expr = MakeMember(expr, ExpectIdent(), line);
+        }
+        else if (Accept("->")) {
+            expr = MakeMember(MakeDeref(expr, line), ExpectIdent(), line);
+        }
+        else if (Accept("++")) {
+            expr = MakeIncDec(expr, 1, true, line);
+        }
+        else if (Accept("--")) {
+            expr = MakeIncDec(expr, -1, true, line);
+        }
+        else {
+            return expr;
         }
     }
 }
 
-static Node* Unary()
-{
+static Node* MakeUnary(NodeKind kind, Node* operand, Type* type, int line) {
+    Node* node = NewNode(kind, line);
+    node->operand = operand;
+    node->type = type;
+    return node;
+}
+
+static Node* Unary() {
     int line = Tok().line;
-    if (Accept("+")) { Node* e = CastExpression(); NeedInteger(e, "unary +"); return MakeCast(e, Promote(e->type)); }
+    if (Accept("+")) {
+        Node* operand = CastExpression();
+        NeedInteger(operand, "unary +");
+        return MakeCast(operand, Promote(operand->type));
+    }
     if (Accept("-")) {
-        Node* e = CastExpression();
-        NeedInteger(e, "unary -");
-        Node* n = NewNode(NodeNeg, line);
-        n->a = e;
-        n->type = Promote(e->type);
-        return n;
+        Node* operand = CastExpression();
+        NeedInteger(operand, "unary -");
+        return MakeUnary(NodeNeg, operand, Promote(operand->type), line);
     }
     if (Accept("!")) {
-        Node* e = CastExpression();
-        NeedScalar(e, "!");
-        Node* n = NewNode(NodeNot, line);
-        n->a = e;
-        n->type = TypeInt;
-        return n;
+        Node* operand = CastExpression();
+        NeedScalar(operand, "!");
+        return MakeUnary(NodeNot, operand, TypeInt, line);
     }
     if (Accept("~")) {
-        Node* e = CastExpression();
-        NeedInteger(e, "~");
-        Node* n = NewNode(NodeBitNot, line);
-        n->a = e;
-        n->type = Promote(e->type);
-        return n;
+        Node* operand = CastExpression();
+        NeedInteger(operand, "~");
+        return MakeUnary(NodeBitNot, operand, Promote(operand->type), line);
     }
     if (Accept("&")) {
-        Node* e = CastExpression();
-        if (!IsLvalue(e)) Fatal(line, "cannot take the address of this expression");
-        Node* n = NewNode(NodeAddr, line);
-        n->a = e;
-        n->type = PointerTo(e->type);
-        return n;
-    }
-    if (Accept("*")) return MakeDeref(CastExpression(), line);
-    if (Accept("++")) return MakeIncDec(Unary(), 1, false, line);
-    if (Accept("--")) return MakeIncDec(Unary(), -1, false, line);
-    if (Accept("sizeof")) {
-        Type* t;
-        if (Is("(") && IsTypeToken(TokAt(pos + 1))) {
-            pos++;
-            t = TypeName();
-            Expect(")");
-        } else {
-            t = Unary()->type;
+        Node* operand = CastExpression();
+        if (!IsLvalue(operand)) {
+            Fatal(line, "cannot take the address of this expression");
         }
-        if (t->kind == KindStruct && !t->info->complete) Fatal(line, "sizeof of incomplete type");
-        if (t->kind == KindArray && t->length < 0) Fatal(line, "sizeof of incomplete array");
-        return NewNumber(t->size, line, TypeUInt);
+        return MakeUnary(NodeAddr, operand, PointerTo(operand->type), line);
+    }
+    if (Accept("*")) {
+        return MakeDeref(CastExpression(), line);
+    }
+    if (Accept("++")) {
+        return MakeIncDec(Unary(), 1, false, line);
+    }
+    if (Accept("--")) {
+        return MakeIncDec(Unary(), -1, false, line);
+    }
+    if (Accept("sizeof")) {
+        Type* type;
+        bool isTypeName = Is("(") && IsTypeToken(TokAt(pos + 1));
+        if (isTypeName) {
+            pos++;
+            type = TypeName();
+            Expect(")");
+        }
+        else {
+            type = Unary()->type;
+        }
+        if (type->kind == KindStruct && !type->info->complete) {
+            Fatal(line, "sizeof of incomplete type");
+        }
+        if (type->kind == KindArray && type->length < 0) {
+            Fatal(line, "sizeof of incomplete array");
+        }
+        return NewNumber(type->size, line, TypeUInt);
     }
     return Postfix();
 }
 
-static Node* CastExpression()
-{
-    if (Is("(") && IsTypeToken(TokAt(pos + 1))) {
-        int line = Tok().line;
-        pos++;
-        Type* t = TypeName();
-        Expect(")");
-        if (Is("{")) Fatal(line, "compound literals are not supported");
-        Node* e = CastExpression();
-        if (t->kind != KindVoid) NeedScalar(e, "cast");
-        return MakeCast(e, t);
+static Node* CastExpression() {
+    bool isCast = Is("(") && IsTypeToken(TokAt(pos + 1));
+    if (!isCast) {
+        return Unary();
     }
-    return Unary();
-}
-
-static Node* Multiplicative()
-{
-    Node* e = CastExpression();
-    for (;;) {
-        int line = Tok().line;
-        if (Accept("*")) e = MakeBinary(NodeMul, e, CastExpression(), line, "*");
-        else if (Accept("/")) e = MakeBinary(NodeDiv, e, CastExpression(), line, "/");
-        else if (Accept("%")) e = MakeBinary(NodeMod, e, CastExpression(), line, "%");
-        else return e;
-    }
-}
-
-static Node* Additive()
-{
-    Node* e = Multiplicative();
-    for (;;) {
-        int line = Tok().line;
-        if (Accept("+")) e = MakeAdd(e, Multiplicative(), line);
-        else if (Accept("-")) e = MakeSub(e, Multiplicative(), line);
-        else return e;
-    }
-}
-
-static Node* Shift()
-{
-    Node* e = Additive();
-    for (;;) {
-        int line = Tok().line;
-        if (Accept("<<")) e = MakeBinary(NodeShl, e, Additive(), line, "<<");
-        else if (Accept(">>")) e = MakeBinary(NodeShr, e, Additive(), line, ">>");
-        else return e;
-    }
-}
-
-static Node* Relational()
-{
-    Node* e = Shift();
-    for (;;) {
-        int line = Tok().line;
-        if (Accept("<")) e = MakeCompare(NodeLt, e, Shift(), line, false);
-        else if (Accept("<=")) e = MakeCompare(NodeLe, e, Shift(), line, false);
-        else if (Accept(">")) e = MakeCompare(NodeLt, e, Shift(), line, true);
-        else if (Accept(">=")) e = MakeCompare(NodeLe, e, Shift(), line, true);
-        else return e;
-    }
-}
-
-static Node* Equality()
-{
-    Node* e = Relational();
-    for (;;) {
-        int line = Tok().line;
-        if (Accept("==")) e = MakeCompare(NodeEq, e, Relational(), line, false);
-        else if (Accept("!=")) e = MakeCompare(NodeNe, e, Relational(), line, false);
-        else return e;
-    }
-}
-
-static Node* BitAnd()
-{
-    Node* e = Equality();
-    while (Is("&")) { int line = Tok().line; pos++; e = MakeBinary(NodeAnd, e, Equality(), line, "&"); }
-    return e;
-}
-
-static Node* BitXor()
-{
-    Node* e = BitAnd();
-    while (Is("^")) { int line = Tok().line; pos++; e = MakeBinary(NodeXor, e, BitAnd(), line, "^"); }
-    return e;
-}
-
-static Node* BitOr()
-{
-    Node* e = BitXor();
-    while (Is("|")) { int line = Tok().line; pos++; e = MakeBinary(NodeOr, e, BitXor(), line, "|"); }
-    return e;
-}
-
-static Node* Logical(NodeKind kind, Node* a, Node* b, int line)
-{
-    NeedScalar(a, "logical operator");
-    NeedScalar(b, "logical operator");
-    Node* n = NewNode(kind, line);
-    n->a = a;
-    n->b = b;
-    n->type = TypeInt;
-    return n;
-}
-
-static Node* LogicalAnd()
-{
-    Node* e = BitOr();
-    while (Is("&&")) { int line = Tok().line; pos++; e = Logical(NodeLogAnd, e, BitOr(), line); }
-    return e;
-}
-
-static Node* LogicalOr()
-{
-    Node* e = LogicalAnd();
-    while (Is("||")) { int line = Tok().line; pos++; e = Logical(NodeLogOr, e, LogicalAnd(), line); }
-    return e;
-}
-
-Node* Conditional()
-{
-    Node* cond = LogicalOr();
-    if (!Is("?")) return cond;
     int line = Tok().line;
     pos++;
-    NeedScalar(cond, "?:");
-    Node* n = NewNode(NodeCond, line);
-    n->a = cond;
-    n->b = Expression();
-    Expect(":");
-    n->c = Conditional();
-    Type* tb = Decay(n->b->type);
-    Type* tc = Decay(n->c->type);
-    if (IsInteger(tb) && IsInteger(tc)) n->type = UsualArithmetic(tb, tc);
-    else if (tb->kind == KindPointer) n->type = tb;
-    else if (tc->kind == KindPointer) n->type = tc;
-    else if (tb->kind == KindStruct && tb == tc) n->type = tb;
-    else if (tb->kind == KindVoid && tc->kind == KindVoid) n->type = TypeVoid;
-    else Fatal(line, "incompatible operands to ?:");
-    return n;
+    Type* type = TypeName();
+    Expect(")");
+    if (Is("{")) {
+        Fatal(line, "compound literals are not supported");
+    }
+    Node* expr = CastExpression();
+    if (type->kind != KindVoid) {
+        NeedScalar(expr, "cast");
+    }
+    return MakeCast(expr, type);
 }
 
-Node* Assignment()
-{
+static Node* Multiplicative() {
+    Node* expr = CastExpression();
+    for (;;) {
+        int line = Tok().line;
+        if (Accept("*")) {
+            expr = MakeBinary(NodeMul, expr, CastExpression(), line, "*");
+        }
+        else if (Accept("/")) {
+            expr = MakeBinary(NodeDiv, expr, CastExpression(), line, "/");
+        }
+        else if (Accept("%")) {
+            expr = MakeBinary(NodeMod, expr, CastExpression(), line, "%");
+        }
+        else {
+            return expr;
+        }
+    }
+}
+
+static Node* Additive() {
+    Node* expr = Multiplicative();
+    for (;;) {
+        int line = Tok().line;
+        if (Accept("+")) {
+            expr = MakeAdd(expr, Multiplicative(), line);
+        }
+        else if (Accept("-")) {
+            expr = MakeSub(expr, Multiplicative(), line);
+        }
+        else {
+            return expr;
+        }
+    }
+}
+
+static Node* Shift() {
+    Node* expr = Additive();
+    for (;;) {
+        int line = Tok().line;
+        if (Accept("<<")) {
+            expr = MakeBinary(NodeShl, expr, Additive(), line, "<<");
+        }
+        else if (Accept(">>")) {
+            expr = MakeBinary(NodeShr, expr, Additive(), line, ">>");
+        }
+        else {
+            return expr;
+        }
+    }
+}
+
+static Node* Relational() {
+    Node* expr = Shift();
+    for (;;) {
+        int line = Tok().line;
+        if (Accept("<")) {
+            expr = MakeCompare(NodeLt, expr, Shift(), line, false);
+        }
+        else if (Accept("<=")) {
+            expr = MakeCompare(NodeLe, expr, Shift(), line, false);
+        }
+        else if (Accept(">")) {
+            expr = MakeCompare(NodeLt, expr, Shift(), line, true);
+        }
+        else if (Accept(">=")) {
+            expr = MakeCompare(NodeLe, expr, Shift(), line, true);
+        }
+        else {
+            return expr;
+        }
+    }
+}
+
+static Node* Equality() {
+    Node* expr = Relational();
+    for (;;) {
+        int line = Tok().line;
+        if (Accept("==")) {
+            expr = MakeCompare(NodeEq, expr, Relational(), line, false);
+        }
+        else if (Accept("!=")) {
+            expr = MakeCompare(NodeNe, expr, Relational(), line, false);
+        }
+        else {
+            return expr;
+        }
+    }
+}
+
+static Node* BitAnd() {
+    Node* expr = Equality();
+    while (Is("&")) {
+        int line = Tok().line;
+        pos++;
+        expr = MakeBinary(NodeAnd, expr, Equality(), line, "&");
+    }
+    return expr;
+}
+
+static Node* BitXor() {
+    Node* expr = BitAnd();
+    while (Is("^")) {
+        int line = Tok().line;
+        pos++;
+        expr = MakeBinary(NodeXor, expr, BitAnd(), line, "^");
+    }
+    return expr;
+}
+
+static Node* BitOr() {
+    Node* expr = BitXor();
+    while (Is("|")) {
+        int line = Tok().line;
+        pos++;
+        expr = MakeBinary(NodeOr, expr, BitXor(), line, "|");
+    }
+    return expr;
+}
+
+static Node* Logical(NodeKind kind, Node* left, Node* right, int line) {
+    NeedScalar(left, "logical operator");
+    NeedScalar(right, "logical operator");
+    Node* node = NewNode(kind, line);
+    node->left = left;
+    node->right = right;
+    node->type = TypeInt;
+    return node;
+}
+
+static Node* LogicalAnd() {
+    Node* expr = BitOr();
+    while (Is("&&")) {
+        int line = Tok().line;
+        pos++;
+        expr = Logical(NodeLogAnd, expr, BitOr(), line);
+    }
+    return expr;
+}
+
+static Node* LogicalOr() {
+    Node* expr = LogicalAnd();
+    while (Is("||")) {
+        int line = Tok().line;
+        pos++;
+        expr = Logical(NodeLogOr, expr, LogicalAnd(), line);
+    }
+    return expr;
+}
+
+Node* Conditional() {
+    Node* condition = LogicalOr();
+    if (!Is("?")) {
+        return condition;
+    }
+    int line = Tok().line;
+    pos++;
+    NeedScalar(condition, "?:");
+    Node* node = NewNode(NodeCond, line);
+    node->condition = condition;
+    node->then = Expression();
+    Expect(":");
+    node->otherwise = Conditional();
+
+    Type* thenType = Decay(node->then->type);
+    Type* otherwiseType = Decay(node->otherwise->type);
+    if (IsInteger(thenType) && IsInteger(otherwiseType)) {
+        node->type = UsualArithmetic(thenType, otherwiseType);
+    }
+    else if (thenType->kind == KindPointer) {
+        node->type = thenType;
+    }
+    else if (otherwiseType->kind == KindPointer) {
+        node->type = otherwiseType;
+    }
+    else if (thenType->kind == KindStruct && thenType == otherwiseType) {
+        node->type = thenType;
+    }
+    else if (thenType->kind == KindVoid && otherwiseType->kind == KindVoid) {
+        node->type = TypeVoid;
+    }
+    else {
+        Fatal(line, "incompatible operands to ?:");
+    }
+    return node;
+}
+
+struct CompoundOperator {
+    const char* text;
+    NodeKind op;
+};
+
+static const CompoundOperator compoundOperators[] = {
+    {"+=", NodeAdd},
+    {"-=", NodeSub},
+    {"*=", NodeMul},
+    {"/=", NodeDiv},
+    {"%=", NodeMod},
+    {"&=", NodeAnd},
+    {"|=", NodeOr},
+    {"^=", NodeXor},
+    {"<<=", NodeShl},
+    {">>=", NodeShr},
+};
+
+Node* Assignment() {
     Node* lhs = Conditional();
     int line = Tok().line;
-    if (Accept("=")) return MakeAssign(lhs, Assignment(), line);
+    if (Accept("=")) {
+        return MakeAssign(lhs, Assignment(), line);
+    }
 
-    static const struct { const char* text; NodeKind op; } compound[] = {
-        {"+=", NodeAdd}, {"-=", NodeSub}, {"*=", NodeMul}, {"/=", NodeDiv}, {"%=", NodeMod},
-        {"&=", NodeAnd}, {"|=", NodeOr}, {"^=", NodeXor}, {"<<=", NodeShl}, {">>=", NodeShr}};
-    for (auto& c : compound) {
-        if (!Accept(c.text)) continue;
-        Node* rhs = Assignment();
-        if (!IsLvalue(lhs)) Fatal(line, "left side of '%s' is not assignable", c.text);
-        Node* n = NewNode(NodeCompound, line);
-        n->op = c.op;
-        n->a = lhs;
-        n->type = lhs->type;
-        if (lhs->type->kind == KindPointer) {
-            if (c.op != NodeAdd && c.op != NodeSub) Fatal(line, "invalid '%s' on a pointer", c.text);
-            NeedInteger(rhs, c.text);
-            n->b = Scaled(rhs, ElementSize(lhs->type, line));
-            n->opUnsigned = true;
-        } else {
-            NeedInteger(lhs, c.text);
-            NeedInteger(rhs, c.text);
-            n->b = rhs;
-            Type* opType = (c.op == NodeShl || c.op == NodeShr) ? Promote(lhs->type) : UsualArithmetic(lhs->type, rhs->type);
-            n->opUnsigned = opType->isUnsigned;
+    for (const CompoundOperator& compound : compoundOperators) {
+        if (!Accept(compound.text)) {
+            continue;
         }
-        return n;
+        Node* rhs = Assignment();
+        if (!IsLvalue(lhs)) {
+            Fatal(line, "left side of '%s' is not assignable", compound.text);
+        }
+        Node* node = NewNode(NodeCompound, line);
+        node->op = compound.op;
+        node->left = lhs;
+        node->type = lhs->type;
+        if (lhs->type->kind == KindPointer) {
+            if (compound.op != NodeAdd && compound.op != NodeSub) {
+                Fatal(line, "invalid '%s' on a pointer", compound.text);
+            }
+            NeedInteger(rhs, compound.text);
+            node->right = Scaled(rhs, ElementSize(lhs->type, line));
+            node->opUnsigned = true;
+        }
+        else {
+            NeedInteger(lhs, compound.text);
+            NeedInteger(rhs, compound.text);
+            node->right = rhs;
+            node->opUnsigned = OperatorType(compound.op, lhs->type, rhs->type)->isUnsigned;
+        }
+        return node;
     }
     return lhs;
 }
 
-Node* Expression()
-{
-    Node* e = Assignment();
+Node* Expression() {
+    Node* expr = Assignment();
     while (Is(",")) {
         int line = Tok().line;
         pos++;
-        Node* n = NewNode(NodeComma, line);
-        n->a = e;
-        n->b = Assignment();
-        n->type = n->b->type;
-        e = n;
+        Node* comma = NewNode(NodeComma, line);
+        comma->left = expr;
+        comma->right = Assignment();
+        comma->type = comma->right->type;
+        expr = comma;
     }
-    return e;
+    return expr;
 }
 
 // ===========================================================================
 // Constant evaluation (array sizes, case labels, enums, global initializers)
 
-long long Wrap16(long long v, bool isUnsigned)
-{
-    v &= 0xFFFF;
-    if (!isUnsigned && v >= 0x8000) v -= 0x10000;
-    return v;
+long long Wrap16(long long value, bool isUnsigned) {
+    value &= 0xFFFF;
+    if (!isUnsigned && value >= 0x8000) {
+        value -= 0x10000;
+    }
+    return value;
 }
 
-static long long EvaluateAddress(Node* n, string* label)
-{
-    switch (n->kind) {
-    case NodeVar:
-        if (n->var->isLocal || !label) Fatal(n->line, "not a constant expression");
-        if (!label->empty()) Fatal(n->line, "constant expression refers to two addresses");
-        *label = n->var->label;
-        return n->value;
-    case NodeMember: return EvaluateAddress(n->a, label) + n->member->offset;
-    case NodeDeref: return Evaluate(n->a, label);
-    default: Fatal(n->line, "not a constant expression");
-    }
-}
-
-long long Evaluate(Node* n, string* label)
-{
-    bool u = n->opUnsigned;
-    switch (n->kind) {
-    case NodeNumber: return n->value;
-    case NodeAdd: { long long a = Evaluate(n->a, label); return Wrap16(a + Evaluate(n->b, label), n->type->isUnsigned); }
-    case NodeSub: { long long a = Evaluate(n->a, label); return Wrap16(a - Evaluate(n->b), n->type->isUnsigned); }
-    case NodeMul: return Wrap16(Evaluate(n->a) * Evaluate(n->b), u);
-    case NodeDiv:
-    case NodeMod: {
-        long long a = Evaluate(n->a), b = Evaluate(n->b);
-        if (u) { a &= 0xFFFF; b &= 0xFFFF; }
-        if (b == 0) Fatal(n->line, "division by zero in constant expression");
-        return Wrap16(n->kind == NodeDiv ? a / b : a % b, u);
-    }
-    case NodeAnd: return Wrap16(Evaluate(n->a) & Evaluate(n->b), u);
-    case NodeOr: return Wrap16(Evaluate(n->a) | Evaluate(n->b), u);
-    case NodeXor: return Wrap16(Evaluate(n->a) ^ Evaluate(n->b), u);
-    case NodeShl: return Wrap16(Evaluate(n->a) << (Evaluate(n->b) & 15), u);
-    case NodeShr: {
-        long long a = Evaluate(n->a);
-        if (u) a &= 0xFFFF;
-        return Wrap16(a >> (Evaluate(n->b) & 15), u);
-    }
-    case NodeEq: return Evaluate(n->a) == Evaluate(n->b);
-    case NodeNe: return Evaluate(n->a) != Evaluate(n->b);
-    case NodeLt:
-    case NodeLe: {
-        long long a = Evaluate(n->a), b = Evaluate(n->b);
-        if (u) { a &= 0xFFFF; b &= 0xFFFF; }
-        return n->kind == NodeLt ? a < b : a <= b;
-    }
-    case NodeLogAnd: return Evaluate(n->a) && Evaluate(n->b);
-    case NodeLogOr: return Evaluate(n->a) || Evaluate(n->b);
-    case NodeNot: return !Evaluate(n->a);
-    case NodeBitNot: return Wrap16(~Evaluate(n->a), n->type->isUnsigned);
-    case NodeNeg: return Wrap16(-Evaluate(n->a), n->type->isUnsigned);
-    case NodeCond: return Evaluate(n->a) ? Evaluate(n->b, label) : Evaluate(n->c, label);
-    case NodeComma: return Evaluate(n->b, label);
-    case NodeCast: {
-        long long v = Evaluate(n->a, label);
-        Type* t = n->type;
-        if (t->kind == KindBool) return v != 0;
-        if (t->kind == KindChar) return t->isUnsigned ? (v & 0xFF) : (signed char)(v & 0xFF);
-        if (label && !label->empty()) return v;
-        return Wrap16(v, t->isUnsigned);
-    }
-    case NodeAddr: return EvaluateAddress(n->a, label);
-    case NodeVar:
-    case NodeDeref:
-    case NodeMember:
-        // arrays and functions decay to their (constant) address
-        if (n->type->kind == KindArray || n->type->kind == KindFunction) return EvaluateAddress(n, label);
-        Fatal(n->line, "not a constant expression");
-    default: Fatal(n->line, "not a constant expression");
+static long long EvaluateAddress(Node* node, string* label) {
+    switch (node->kind) {
+        case NodeVar:
+            if (node->var->isLocal || !label) {
+                Fatal(node->line, "not a constant expression");
+            }
+            if (!label->empty()) {
+                Fatal(node->line, "constant expression refers to two addresses");
+            }
+            *label = node->var->label;
+            return node->value;
+        case NodeMember:
+            return EvaluateAddress(node->operand, label) + node->member->offset;
+        case NodeDeref:
+            return Evaluate(node->operand, label);
+        default:
+            Fatal(node->line, "not a constant expression");
     }
 }
 
-long long ConstantExpression()
-{
-    Node* e = Conditional();
-    return Evaluate(e);
+// Unsigned operations work on the 16-bit pattern, so drop the sign extension first.
+static long long AsUnsigned(long long value, bool isUnsigned) {
+    return isUnsigned ? (value & 0xFFFF) : value;
+}
+
+long long Evaluate(Node* node, string* label) {
+    bool isUnsigned = node->opUnsigned;
+    switch (node->kind) {
+        case NodeNumber:
+            return node->value;
+        case NodeAdd: {
+            long long left = Evaluate(node->left, label);
+            return Wrap16(left + Evaluate(node->right, label), node->type->isUnsigned);
+        }
+        case NodeSub: {
+            long long left = Evaluate(node->left, label);
+            return Wrap16(left - Evaluate(node->right), node->type->isUnsigned);
+        }
+        case NodeMul:
+            return Wrap16(Evaluate(node->left) * Evaluate(node->right), isUnsigned);
+        case NodeDiv:
+        case NodeMod: {
+            long long left = AsUnsigned(Evaluate(node->left), isUnsigned);
+            long long right = AsUnsigned(Evaluate(node->right), isUnsigned);
+            if (right == 0) {
+                Fatal(node->line, "division by zero in constant expression");
+            }
+            if (node->kind == NodeDiv) {
+                return Wrap16(left / right, isUnsigned);
+            }
+            return Wrap16(left % right, isUnsigned);
+        }
+        case NodeAnd:
+            return Wrap16(Evaluate(node->left) & Evaluate(node->right), isUnsigned);
+        case NodeOr:
+            return Wrap16(Evaluate(node->left) | Evaluate(node->right), isUnsigned);
+        case NodeXor:
+            return Wrap16(Evaluate(node->left) ^ Evaluate(node->right), isUnsigned);
+        case NodeShl: {
+            long long count = Evaluate(node->right) & 15;
+            return Wrap16(Evaluate(node->left) << count, isUnsigned);
+        }
+        case NodeShr: {
+            long long left = AsUnsigned(Evaluate(node->left), isUnsigned);
+            long long count = Evaluate(node->right) & 15;
+            return Wrap16(left >> count, isUnsigned);
+        }
+        case NodeEq:
+            return Evaluate(node->left) == Evaluate(node->right);
+        case NodeNe:
+            return Evaluate(node->left) != Evaluate(node->right);
+        case NodeLt:
+        case NodeLe: {
+            long long left = AsUnsigned(Evaluate(node->left), isUnsigned);
+            long long right = AsUnsigned(Evaluate(node->right), isUnsigned);
+            if (node->kind == NodeLt) {
+                return left < right;
+            }
+            return left <= right;
+        }
+        case NodeLogAnd:
+            return Evaluate(node->left) && Evaluate(node->right);
+        case NodeLogOr:
+            return Evaluate(node->left) || Evaluate(node->right);
+        case NodeNot:
+            return !Evaluate(node->operand);
+        case NodeBitNot:
+            return Wrap16(~Evaluate(node->operand), node->type->isUnsigned);
+        case NodeNeg:
+            return Wrap16(-Evaluate(node->operand), node->type->isUnsigned);
+        case NodeCond:
+            if (Evaluate(node->condition)) {
+                return Evaluate(node->then, label);
+            }
+            return Evaluate(node->otherwise, label);
+        case NodeComma:
+            return Evaluate(node->right, label);
+        case NodeCast: {
+            long long value = Evaluate(node->operand, label);
+            Type* type = node->type;
+            if (type->kind == KindBool) {
+                return value != 0;
+            }
+            if (type->kind == KindChar) {
+                if (type->isUnsigned) {
+                    return value & 0xFF;
+                }
+                return (signed char)(value & 0xFF);
+            }
+            bool isAddress = label && !label->empty();
+            if (isAddress) {
+                return value;  // label + offset: the assembler does the wrapping
+            }
+            return Wrap16(value, type->isUnsigned);
+        }
+        case NodeAddr:
+            return EvaluateAddress(node->operand, label);
+        case NodeVar:
+        case NodeDeref:
+        case NodeMember:
+            // arrays and functions decay to their (constant) address
+            if (node->type->kind == KindArray || node->type->kind == KindFunction) {
+                return EvaluateAddress(node, label);
+            }
+            Fatal(node->line, "not a constant expression");
+        default:
+            Fatal(node->line, "not a constant expression");
+    }
+}
+
+long long ConstantExpression() {
+    Node* expr = Conditional();
+    return Evaluate(expr);
 }
 
 }  // namespace Kestrel::Compiler

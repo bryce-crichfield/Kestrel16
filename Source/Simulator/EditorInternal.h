@@ -20,7 +20,8 @@
 
 namespace Kestrel {
 
-enum class Mode { Edit, Simulate };
+enum class Mode { Edit,
+                  Simulate };
 
 struct App {
     Component* current = nullptr;

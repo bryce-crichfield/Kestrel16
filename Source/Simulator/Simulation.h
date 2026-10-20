@@ -30,14 +30,27 @@
 
 namespace Kestrel {
 
-enum class GateKind : uint8_t { Switch, Low, High, Clock, Buffer, Not, And, Or, Nand, Nor, Xor, Xnor, FlipFlop, TriState };
+enum class GateKind : uint8_t { Switch,
+                                Low,
+                                High,
+                                Clock,
+                                Buffer,
+                                Not,
+                                And,
+                                Or,
+                                Nand,
+                                Nor,
+                                Xor,
+                                Xnor,
+                                FlipFlop,
+                                TriState };
 
 struct Gate {
     GateKind kind;
-    int inputs[2] = {-1, -1};   // net ids (endpoint ids while flattening)
+    int inputs[2] = {-1, -1};  // net ids (endpoint ids while flattening)
     int outputs[2] = {-1, -1};
-    uint8_t state = 0;          // switch position, or flip-flop contents
-    uint8_t lastClock = 0;      // flip-flop: CLK as of the previous step
+    uint8_t state = 0;      // switch position, or flip-flop contents
+    uint8_t lastClock = 0;  // flip-flop: CLK as of the previous step
 };
 
 // A ROM in the flattened circuit: reads its address nets, drives its data nets.
@@ -58,7 +71,7 @@ struct RamUnit {
 // A Terminal in the flattened circuit. Its screen and keyboard are the simulation's console and keys.
 struct TerminalUnit {
     int registerSelect = -1, chipEnable = -1, outputEnable = -1, writeEnable = -1, irq = -1;
-    std::vector<int> data;  // net ids; read when written, driven when read
+    std::vector<int> data;                  // net ids; read when written, driven when read
     bool writing = false, reading = false;  // in the middle of a write or read cycle
     int writeRegister = 0, readRegister = 0;
     uint8_t writeByte = 0;
@@ -83,7 +96,7 @@ struct Simulation {
     // The edited component's own nodes, for drawing and inspecting: pin -> net.
     std::unordered_map<uint32_t, std::vector<int>> nodeInputNets, nodeOutputNets;
     std::unordered_map<uint32_t, std::vector<int>> switchGates;  // Input node -> its switch gates, bit 0 first
-    std::unordered_map<uint32_t, int> topRams;      // RAM node -> its unit in rams
+    std::unordered_map<uint32_t, int> topRams;                   // RAM node -> its unit in rams
 
     uint8_t clock = 0;
     uint64_t halfCycles = 0;
@@ -99,13 +112,11 @@ struct Simulation {
     bool randomRam = false;  // RAM powers up holding random bytes, as real RAM does, rather than zeros
     double pendingHalfCycles = 0;
 
-    int NetOfOutput(uint32_t node, int pin) const
-    {
+    int NetOfOutput(uint32_t node, int pin) const {
         auto found = nodeOutputNets.find(node);
         return found != nodeOutputNets.end() && pin < static_cast<int>(found->second.size()) ? found->second[pin] : -1;
     }
-    int NetOfInput(uint32_t node, int pin) const
-    {
+    int NetOfInput(uint32_t node, int pin) const {
         auto found = nodeInputNets.find(node);
         return found != nodeInputNets.end() && pin < static_cast<int>(found->second.size()) ? found->second[pin] : -1;
     }

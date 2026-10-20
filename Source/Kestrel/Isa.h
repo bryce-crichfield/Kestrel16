@@ -56,6 +56,13 @@ enum class Condition : uint8_t {
 #undef KestrelCondition
 };
 
+// The hardware ALU's own operation codes (AluOperations.h), which its microcode picks.
+enum class AluOperation : uint8_t {
+#define KestrelAluOperation(name, code) name = code,
+#include "AluOperations.h"
+#undef KestrelAluOperation
+};
+
 enum class InstructionForm : uint8_t {
 #define KestrelForm(name) name,
 #include "Instructions.h"
@@ -70,6 +77,26 @@ struct Address {
 #include "MemoryMap.h"
 #undef KestrelRegisterAddress
 };
+
+struct IoBus {
+#define KestrelIoBus(name, value) static constexpr int name = value;
+#include "MemoryMap.h"
+#undef KestrelIoBus
+};
+static_assert(Address::IoBase + IoBus::SlotSize * IoBus::SlotCount == 0x10000, "the slots fill the I/O space");
+
+// Slot numbers, which are also the devices' bits in the interrupt pending and mask registers.
+struct Slot {
+#define KestrelSlot(name, number) static constexpr int name = number;
+#include "MemoryMap.h"
+#undef KestrelSlot
+};
+
+constexpr int SlotOf(uint16_t ioAddress) {
+    return (ioAddress - Address::IoBase) / IoBus::SlotSize;
+}
+static_assert(SlotOf(Address::TimerAcknowledge) == Slot::System && SlotOf(Address::UartStatus) == Slot::Uart,
+              "each register sits in its device's slot");
 
 struct UartStatus {
 #define KestrelUartStatusBit(name, bit) static constexpr uint16_t name = 1 << bit;
@@ -110,10 +137,10 @@ struct Instruction {
     int condition;
     int systemFunction;
     int systemSource;
-    int immediate6;     // sign extended
-    int immediate8;     // zero extended
-    int offset8;        // sign extended, in words
-    int offset12;       // sign extended, in words
+    int immediate6;  // sign extended
+    int immediate8;  // zero extended
+    int offset8;     // sign extended, in words
+    int offset12;    // sign extended, in words
 };
 
 int SignExtend(int value, int bits);
@@ -123,8 +150,7 @@ Instruction Decode(uint16_t word);
 const InstructionInfo* FindInstruction(const Instruction& instruction);
 
 // Where a branch or jump goes: offsets count words from the next instruction.
-inline uint16_t BranchTarget(uint16_t nextAddress, int offsetInWords)
-{
+inline uint16_t BranchTarget(uint16_t nextAddress, int offsetInWords) {
     return static_cast<uint16_t>(nextAddress + offsetInWords * InstructionSize);
 }
 

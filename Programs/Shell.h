@@ -3,9 +3,9 @@
 #ifndef SHELL_H
 #define SHELL_H
 
-// The UART: data at 0xFF00, status at 0xFF02 (bit 0 = a byte is ready).
-#define UART_DATA   ((unsigned *)0xFF00)
-#define UART_STATUS ((unsigned *)0xFF02)
+// The UART: data at 0xFC80, status at 0xFC82 (slot 1) (bit 0 = a byte is ready).
+#define UART_DATA   ((unsigned *)0xFC80)
+#define UART_STATUS ((unsigned *)0xFC82)
 #define RX_READY    1
 
 #define LINE_MAX    80

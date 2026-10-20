@@ -8,7 +8,7 @@ C++ side can't drift apart:
 Each line of those files that isn't a comment or a # directive is a macro call, Kestrel<Kind>(...),
 whose arguments are names, numbers or "quoted text". The tables here are keyed by name:
 
-    Opcodes['System'] == 12, Conditions['Equal'] == 1, Devices['Timer'] == (0xFF04, 4), ...
+    Opcodes['System'] == 12, Conditions['Equal'] == 1, Slots['Uart'] == 1, ...
 """
 import os
 import re
@@ -49,7 +49,8 @@ SystemFunctions = {name: number for name, number in instructions['SystemFunction
 Conditions = {name: number for name, number, suffix in instructions['Condition']}
 
 Addresses = {name: number for name, number in memoryMap['Address']}
-Devices = {name: (base, size) for name, base, size in memoryMap['Device']}  # base, size in bytes
+IoBus = {name: number for name, number in memoryMap['IoBus']}  # SlotSize, SlotCount
+Slots = {name: number for name, number in memoryMap['Slot']}  # also the device's interrupt bit
 RegisterAddresses = {name: number for name, number in memoryMap['RegisterAddress']}
 
 AluOperations = {name: code for name, code in aluOperations['AluOperation']}

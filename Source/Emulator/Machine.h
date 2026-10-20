@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "Isa.h"
+#include "Kestrel/Isa.h"
 
 #include <array>
 #include <cstdint>
@@ -15,10 +15,10 @@ constexpr int MemorySize = 65536;
 
 // What is on the other end of the UART: a keyboard and a screen.
 class Terminal {
-public:
+   public:
     virtual ~Terminal() = default;
-    virtual bool KeyWaiting() = 0;      // a typed byte is ready to read
-    virtual uint8_t ReadKey() = 0;      // takes it (only called when KeyWaiting())
+    virtual bool KeyWaiting() = 0;  // a typed byte is ready to read
+    virtual uint8_t ReadKey() = 0;  // takes it (only called when KeyWaiting())
     virtual void Print(uint8_t byte) = 0;
 };
 
@@ -30,13 +30,17 @@ struct Cpu {
     uint8_t exceptionFlags = 0;
     bool interruptsEnabled = false;
     bool halted = false;
-    bool interruptPending = false;
+    uint8_t interruptMask = 0;  // bit n: slot n may interrupt
+    bool timerPending = false;  // the timer's interrupt request, until acknowledged
     uint16_t timerReload = 0;
     uint16_t timerCount = 0;
     unsigned long long steps = 0;
 };
 
-enum class StepResult { Running, Halted, Illegal, LimitReached };
+enum class StepResult { Running,
+                        Halted,
+                        Illegal,
+                        LimitReached };
 
 // What one Step did: the instruction it ran (or tried to), if it ran one.
 struct StepInfo {
@@ -46,7 +50,7 @@ struct StepInfo {
 };
 
 class Machine {
-public:
+   public:
     explicit Machine(Terminal& terminal) : terminal(terminal) {}
 
     std::array<uint8_t, MemorySize> memory{};
@@ -58,7 +62,7 @@ public:
 
     uint16_t ReadMemoryWord(uint16_t address) const;
 
-private:
+   private:
     Terminal& terminal;
 
     uint16_t IoRead(uint16_t address);
@@ -69,12 +73,14 @@ private:
     void WriteByte(uint16_t address, uint8_t value);
 
     void TickTimer();
+    uint8_t PendingInterrupts(uint8_t slots);  // the requests among slots, bit n = slot n
+    bool CanWake();                            // could an interrupt still end a HALT?
     uint8_t PackFlags() const;
     void EnterException(uint16_t returnAddress);
-    bool ExecuteAlu(const Instruction& in);
-    bool ExecuteAlu2(const Instruction& in);
-    bool ExecuteSystem(const Instruction& in, uint16_t& nextAddress);
-    uint16_t EffectiveAddress(const Instruction& in) const;
+    bool ExecuteAlu(const Instruction& instruction);
+    bool ExecuteAlu2(const Instruction& instruction);
+    bool ExecuteSystem(const Instruction& instruction, uint16_t& nextAddress);
+    uint16_t EffectiveAddress(const Instruction& instruction) const;
 };
 
 }  // namespace Kestrel

@@ -60,7 +60,7 @@ std::string Trim(const std::string& text);
 
 // ROM and RAM images.
 int RomBytesPerWord(const MemoryData& rom);
-std::string LoadRomImage(MemoryData& rom);  // reads rom.image into rom.words; returns a problem, or ""
+std::string LoadRomImage(MemoryData& rom);                                     // reads rom.image into rom.words; returns a problem, or ""
 std::string LoadRomBytes(MemoryData& rom, const std::vector<uint8_t>& bytes);  // the same, from bytes
 bool SaveRomImage(const MemoryData& rom, const std::string& path);
 

@@ -1,83 +1,89 @@
 // Types.cpp -- C types, and the nodes of the syntax tree.
 
-#include "CompilerInternal.h"
+#include "Types.h"
 
 namespace Kestrel::Compiler {
 
-Type* MakeType(Kind kind, int size, int align, bool isUnsigned)
-{
-    Type* t = new Type;
-    t->kind = kind;
-    t->size = size;
-    t->align = align;
-    t->isUnsigned = isUnsigned;
-    return t;
+Type* MakeType(Kind kind, int size, int align, bool isUnsigned) {
+    Type* type = new Type;
+    type->kind = kind;
+    type->size = size;
+    type->align = align;
+    type->isUnsigned = isUnsigned;
+    return type;
 }
 
-Type* TypeVoid  = MakeType(KindVoid, 1, 1);
-Type* TypeBool  = MakeType(KindBool, 1, 1, true);
-Type* TypeChar  = MakeType(KindChar, 1, 1);
+Type* TypeVoid = MakeType(KindVoid, 1, 1);
+Type* TypeBool = MakeType(KindBool, 1, 1, true);
+Type* TypeChar = MakeType(KindChar, 1, 1);
 Type* TypeUChar = MakeType(KindChar, 1, 1, true);
-Type* TypeInt   = MakeType(KindInt, 2, 2);
-Type* TypeUInt  = MakeType(KindInt, 2, 2, true);
+Type* TypeInt = MakeType(KindInt, 2, 2);
+Type* TypeUInt = MakeType(KindInt, 2, 2, true);
 
-Type* PointerTo(Type* base)
-{
-    Type* t = MakeType(KindPointer, 2, 2, true);
-    t->base = base;
-    return t;
+Type* PointerTo(Type* base) {
+    Type* type = MakeType(KindPointer, 2, 2, true);
+    type->base = base;
+    return type;
 }
 
-Type* ArrayOf(Type* base, int length)
-{
-    Type* t = MakeType(KindArray, length < 0 ? 0 : base->size * length, base->align);
-    t->base = base;
-    t->length = length;
-    return t;
+Type* ArrayOf(Type* base, int length) {
+    Type* type = MakeType(KindArray, length < 0 ? 0 : base->size * length, base->align);
+    type->base = base;
+    type->length = length;
+    return type;
 }
 
-bool IsInteger(Type* t) { return t->kind == KindBool || t->kind == KindChar || t->kind == KindInt; }
-bool IsScalar(Type* t) { return IsInteger(t) || t->kind == KindPointer; }
-int AlignUp(int n, int a) { return (n + a - 1) / a * a; }
-
-Type* Decay(Type* t)
-{
-    if (t->kind == KindArray) return PointerTo(t->base);
-    if (t->kind == KindFunction) return PointerTo(t);
-    return t;
+bool IsInteger(Type* type) {
+    return type->kind == KindBool || type->kind == KindChar || type->kind == KindInt;
+}
+bool IsScalar(Type* type) {
+    return IsInteger(type) || type->kind == KindPointer;
+}
+int AlignUp(int value, int alignment) {
+    return (value + alignment - 1) / alignment * alignment;
 }
 
-Type* Promote(Type* t)
-{
-    if (t->kind == KindInt) return t;
-    if (IsInteger(t)) return TypeInt;
-    return t;
+Type* Decay(Type* type) {
+    if (type->kind == KindArray) {
+        return PointerTo(type->base);
+    }
+    if (type->kind == KindFunction) {
+        return PointerTo(type);
+    }
+    return type;
 }
 
-Type* UsualArithmetic(Type* a, Type* b)
-{
-    a = Promote(a);
-    b = Promote(b);
-    return (a->isUnsigned || b->isUnsigned) ? TypeUInt : TypeInt;
+Type* Promote(Type* type) {
+    if (type->kind == KindInt) {
+        return type;
+    }
+    if (IsInteger(type)) {
+        return TypeInt;
+    }
+    return type;
+}
+
+Type* UsualArithmetic(Type* left, Type* right) {
+    left = Promote(left);
+    right = Promote(right);
+    return (left->isUnsigned || right->isUnsigned) ? TypeUInt : TypeInt;
 }
 
 // ===========================================================================
 // AST nodes
 
-Node* NewNode(NodeKind kind, int line)
-{
-    Node* n = new Node;
-    n->kind = kind;
-    n->line = line;
-    return n;
+Node* NewNode(NodeKind kind, int line) {
+    Node* node = new Node;
+    node->kind = kind;
+    node->line = line;
+    return node;
 }
 
-Node* NewNumber(long long value, int line, Type* type)
-{
-    Node* n = NewNode(NodeNumber, line);
-    n->value = value;
-    n->type = type;
-    return n;
+Node* NewNumber(long long value, int line, Type* type) {
+    Node* node = NewNode(NodeNumber, line);
+    node->value = value;
+    node->type = type;
+    return node;
 }
 
 }  // namespace Kestrel::Compiler

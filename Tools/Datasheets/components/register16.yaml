@@ -1,0 +1,69 @@
+name: Register 16
+id: R16
+revision: A
+summary: >
+  16-bit register with two independent tri-state read ports. On the rising edge of CLK it
+  loads D[15:0] when /LOAD is low and holds otherwise. QA drives while /OEA is low, QB while
+  /OEB is low; outputs are independent of the clock.
+
+specs:
+  - [Width, 16 bits]
+  - [Logic family, "74HC, 5 V"]
+  - [Clocking, "Rising edge, synchronous load"]
+  - [Read ports, 2 × tri-state]
+  - [Reset, None (random at power-up)]
+  - [Chips, 6]
+
+pins:
+  - {name: "D[15:0]", dir: in, width: 16, desc: "Data to load"}
+  - {name: /LOAD, dir: in, active: low, desc: "Load enable, sampled on CLK ↑"}
+  - {name: CLK, dir: in, clock: true, desc: "Clock, rising edge"}
+  - {name: /OEA, dir: in, active: low, desc: "Enable read port A"}
+  - {name: /OEB, dir: in, active: low, desc: "Enable read port B"}
+  - {name: "QA[15:0]", dir: out, width: 16, desc: "Read port A, tri-state"}
+  - {name: "QB[15:0]", dir: out, width: 16, desc: "Read port B, tri-state"}
+
+schematic:
+  columns: [[U1, U2], [U3, U4, U5, U6]]
+  chips:
+    U1: {part: 74HC377, label: bits 7–0, inputs: [{name: "D", width: 8}, {name: /E, active: low}, {name: CP, clock: true}], outputs: [{name: Q, width: 8}]}
+    U2: {part: 74HC377, label: bits 15–8, inputs: [{name: "D", width: 8}, {name: /E, active: low}, {name: CP, clock: true}], outputs: [{name: Q, width: 8}]}
+    U3: {part: 74HC541, label: QA 7–0, inputs: [A, {name: /OE1, active: low}], outputs: [Y]}
+    U4: {part: 74HC541, label: QB 7–0, inputs: [A, {name: /OE1, active: low}], outputs: [Y]}
+    U5: {part: 74HC541, label: QA 15–8, inputs: [A, {name: /OE1, active: low}], outputs: [Y]}
+    U6: {part: 74HC541, label: QB 15–8, inputs: [A, {name: /OE1, active: low}], outputs: [Y]}
+  nets:
+    - {from: "D[7:0]", to: [U1.D], width: 8}
+    - {from: "D[15:8]", to: [U2.D], width: 8}
+    - {from: /LOAD, to: [U1./E, U2./E]}
+    - {from: CLK, to: [U1.CP, U2.CP]}
+    - {from: U1.Q, to: [U3.A, U4.A], width: 8}
+    - {from: U2.Q, to: [U5.A, U6.A], width: 8}
+    - {from: /OEA, to: [U3./OE1, U5./OE1]}
+    - {from: /OEB, to: [U4./OE1, U6./OE1]}
+    - {from: U3.Y, to: ["QA[7:0]"], width: 8}
+    - {from: U4.Y, to: ["QB[7:0]"], width: 8}
+    - {from: U5.Y, to: ["QA[15:8]"], width: 8}
+    - {from: U6.Y, to: ["QB[15:8]"], width: 8}
+
+
+tables:
+  - title: Load
+    legend: "↑ rising edge · X don't care · Q₀ previous value"
+    columns: [CLK, /LOAD, D, Q next]
+    rows:
+      - [↑, 0, data, data]
+      - [↑, 1, X, Q₀]
+      - [0 / 1 / ↓, X, X, Q₀]
+  - title: Read ports
+    legend: "independent of CLK · Z high-impedance"
+    columns: [/OEA, "QA[15:0]", /OEB, "QB[15:0]"]
+    rows:
+      - [0, Q, 0, Q]
+      - [1, Z, 1, Z]
+
+
+bom:
+  - [U1 U2, 2, 74HC377, Octal D flip-flop with enable, DIP-20]
+  - [U3–U6, 4, 74HC541, Octal tri-state buffer, DIP-20]
+  - [C1–C6, 6, 100 nF, "Ceramic decoupling, one per chip", 2.54 mm]

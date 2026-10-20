@@ -9,53 +9,58 @@ This document describes how the Kestrel16 software is organized: what each piece
 ## Layers
 
 ```
-        Source/Kestrel/*.h definitions  ◄──── Tools/definitions.py ──► Tools/make_*.py ──► Components/
+        Source/Kestrel/*.h definitions  ◄──── Tools/definitions.py ──► Tools/make_*.py ──► Build/Components/
                     │
-              KestrelCore  (Isa, Alu, Machine, Disassembler, Files)
+              KestrelCore  (Isa, Disassembler, Files: shared definitions)
                ┌────┴─────────────┐
    KestrelAssemblerCore    KestrelCompilerCore
                └────┬─────────────┘
              KestrelToolchain  (.c / .s / .bin → memory image)
                ┌────┴─────────────┐
-      KestrelEmulator      KestrelSimulator  (also links raylib, ImGui, imnodes, yaml-cpp)
+   KestrelEmulatorCore     KestrelSimulatorCore  (circuits, YAML, gate simulation; ImGui, yaml-cpp)
+   (Machine, Alu: the      ┌──────┴──────────┐
+    reference machine) KestrelSimulator     │
+           │           (the editor: raylib, │
+     KestrelEmulator    imnodes)            │
+           └──────────── KestrelValidator ──┘  (emulator vs gate level, ValidatorDesign.md)
 
    KestrelAssembler, KestrelCompiler: thin mains over their Core libraries
 ```
 
-Dependencies point downward only. Nothing in `KestrelCore` knows about the assembler, compiler or simulator. The assembler and compiler don't know about each other: the compiler emits assembly *text*, and the toolchain joins them. Only `KestrelSimulator` depends on graphics or YAML.
+Dependencies point downward only. Nothing in `KestrelCore` knows about the assembler, compiler, emulator or simulator, and only the emulator and the validator link `KestrelEmulatorCore`. The assembler and compiler don't know about each other: the compiler emits assembly *text*, and the toolchain joins them. Only `KestrelSimulatorCore` and its users depend on YAML, and only `KestrelSimulator` on graphics.
 
 | Directory | Target | Owns |
 |---|---|---|
-| `Source/Kestrel/` | `KestrelCore` | The machine: the definition headers, ISA enums and encode/decode, ALU and flags, the reference CPU, the disassembler, file helpers |
+| `Source/Kestrel/` | `KestrelCore` | The shared definitions: the definition headers, ISA enums and encode/decode, the disassembler, file helpers |
 | `Source/Assembler/` | `KestrelAssemblerCore` + `KestrelAssembler` | Assembly text → image (`Assemble()`) |
 | `Source/Compiler/` | `KestrelCompilerCore` + `KestrelCompiler` | C → assembly text (`Compile()`, `Preprocess()`) |
 | `Source/Toolchain/` | `KestrelToolchain` | A program file → a memory image, in-process (`BuildProgram()`) |
-| `Source/Emulator/` | `KestrelEmulator` | The console as a `Terminal`, the CLI, tracing |
-| `Source/Simulator/` | `KestrelSimulator` | The circuit model, YAML files, the gate simulation, the editor, the self-test and hardware check |
-| `Tools/` | (Python) | Generates the hardware components and microcode ROMs into `Components/` |
+| `Source/Emulator/` | `KestrelEmulatorCore` + `KestrelEmulator` | The reference machine: the CPU (`Machine`), the ALU and flags (core); the console as a `Terminal`, the CLI, tracing |
+| `Source/Simulator/` | `KestrelSimulatorCore` + `KestrelSimulator` | The circuit model, YAML files and the gate simulation (core); the editor and the self-test |
+| `Source/Validator/` | `KestrelValidator` | Differential testing: a program on the emulator and on the gate-level computer must end in the same state |
+| `Tools/` | (Python) | Generates the hardware components and microcode ROMs into `Build/Components/` |
 | `Tools/eda/` | (Python, target `kicad`) | `Components/` → KiCad schematic → placed and routed board → Gerbers ([its README](Tools/eda/README.md)) |
 | `Programs/` | (CMake) | Example and test programs, built into `Binary/Programs/` |
 | `Tests/` | (CMake) | Test helpers |
 
 ## Boundaries to defend
 
-1. **The machine is defined once.** Opcodes, functions, conditions, field layout, the memory map and the hardware ALU codes live only in `Instructions.h`, `MemoryMap.h` and `AluOperations.h`. These files hold **definitions only**: one macro call per line, with plain names, numbers and `"quoted"` text, because Python parses them with a regex. Never hard-code an opcode, an address or a condition number anywhere else, in C++ or in Python. Read it from `Isa.h` / `Alu.h` or from `definitions.py`.
+1. **The machine is defined once.** Opcodes, functions, conditions, field layout, the memory map and the hardware ALU codes live only in `Instructions.h`, `MemoryMap.h` and `AluOperations.h`. These files hold **definitions only**: one macro call per line, with plain names, numbers and `"quoted"` text, because Python parses them with a regex. Never hard-code an opcode, an address or a condition number anywhere else, in C++ or in Python. Read it from `Isa.h` or from `definitions.py`.
 
 2. **Libraries don't do process things.** Core libraries never call `exit`, never print, and never parse `argv`. Errors come back as values: `AssemblyResult::errors`, `CompileResult::error` and `warnings`, and `StepResult`. Only `Main.cpp` files (and `BuildProgram`'s diagnostics stream) touch stdout and stderr. This is what lets the emulator and simulator build programs in-process. Keep it that way.
 
 3. **`Machine` talks to the world through `Terminal`.** The CPU core doesn't know about consoles, pipes or the simulator. New I/O devices belong in `Machine`'s I/O decode (and in `MemoryMap.h`), with any host side behind an interface like `Terminal`.
 
 4. **Public headers vs internal headers.**
-   - `Compiler.h`, `Assembler.h`, `Toolchain.h`, `Editor.h`, `HeadlessRun.h` and `Checks.h` are interfaces.
-   - `CompilerInternal.h` and `EditorInternal.h` are shared *only* inside their own directory. Don't include them from elsewhere.
+   - `Compiler.h`, `Assembler.h`, `Toolchain.h`, `Simulation.h`, `Editor.h`, `HeadlessRun.h` and `Checks.h` are interfaces.
+   - The compiler's stage headers (`Lexer.h`, `Parser.h`, `Generator.h` and the rest in `Source/Compiler/`) and `EditorInternal.h` are shared *only* inside their own directory. Don't include them from elsewhere.
 
 5. **Namespaces.** Everything is in `Kestrel`. The compiler's internals are in `Kestrel::Compiler`, because its `Node`, `Type` and `Symbol` would otherwise collide with the simulator's types in the same executable. File-local helpers are `static` or in an anonymous namespace. Don't export a name that only one file uses.
 
-6. **Generated files are generated.** The yaml files and ROM images in `Components/` that `Tools/make_*.py` produce are build output: the `hardware` target writes them, and they are not in version control (`.gitignore` lists them). Change the generator and rebuild; don't hand-edit them. Components drawn in the editor are the exception: they are source.
+6. **Generated files are generated.** The yaml files and ROM images in `Build/Components/` that `Tools/make_*.py` produce are build output: the `hardware` target writes them, so they live under `Build/`, out of the source tree. Change the generator and rebuild; don't hand-edit them.
 
 7. **Behaviour is pinned by tests.**
-   - Each program in `Programs/` has expected output in `CMakeLists.txt`. Programs listed in `GATE_LEVEL_TESTS` must print the same on the gate-level computer as on the emulator.
-   - `--check-hardware` holds the ALU, register file and whole computer to `KestrelCore`.
+   - Each program in `Programs/` has expected output in `CMakeLists.txt`. Each also has a `validate_<name>` test: `KestrelValidator` runs it on the emulator and the gate-level computer, which must end with the same memory, output and (for programs ending in `__dump`) registers and flags.
    - A refactor that changes any of these outputs is not a refactor.
 
 ## Where flexibility is built in
@@ -67,10 +72,11 @@ Dependencies point downward only. Nothing in `KestrelCore` knows about the assem
 
   The assembler's table, the disassembler and the generator's opcode numbers follow automatically. Pseudo-instructions are assembler-only (`AssemblePseudoInstruction`).
 - **Moving the memory map.** Change `MemoryMap.h`. The machine, assembler (image size), compiler (stack top) and address-decode ROM follow.
+- **New I/O devices.** A device is a card in one of the 8 I/O slots (128 bytes each from `IoBase`; the 32-pin slot signals are listed in `Tools/make_cpu.py`). Give it a `KestrelSlot` and its registers in `MemoryMap.h`, its registers and its interrupt request in `Machine`'s I/O decode, and a card component plugged into `make_computer()`. Interrupts are levels: slot n is bit n of the pending and mask registers, and the driver clears its request at the card.
 - **New front ends.** Anything can call `Compile()`, `Assemble()` or `BuildProgram()` and run a `Machine` with its own `Terminal`: a debugger, a test runner, a GUI emulator.
 - **Compiler stages are separable.** The preprocessor is text → text, the lexer text → tokens, and the code generator works per function. Optimizations or a new backend slot in between stages without touching the parser.
-- **The hardware is data.** Components are YAML and ROM images. The simulator knows only primitives (gates, flip-flops, ROM, RAM, Terminal). The CPU's design lives entirely in `Tools/` and `Components/`, so it can be redesigned without touching C++.
-- **Tests are cheap to add.** Drop a `.c` or `.s` into `Programs/`. It is built automatically; give it an `EXPECTED_<name>` and, optionally, add it to `GATE_LEVEL_TESTS`.
+- **The hardware is data.** Components are YAML and ROM images. The simulator knows only primitives (gates, flip-flops, ROM, RAM, Terminal). The CPU's design lives entirely in `Tools/`, so it can be redesigned without touching C++.
+- **Tests are cheap to add.** Drop a `.c` or `.s` into `Programs/`. It is built automatically; it gets a `validate_` test on its own; give it an `EXPECTED_<name>` too.
 
 ## Known compromises
 

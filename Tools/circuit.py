@@ -2,7 +2,7 @@
 import os
 import re
 
-COMPONENTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'Components')
+COMPONENTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'Build', 'Components')
 
 
 class Builder:

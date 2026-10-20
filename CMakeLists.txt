@@ -2,17 +2,16 @@ cmake_minimum_required(VERSION 3.20)
 project(Kestrel16 LANGUAGES C CXX)
 
 # Layout (Source/ is the include root: #include "Kestrel/Isa.h"):
-#   Source/Kestrel/      KestrelCore: the machine. Instructions.h, MemoryMap.h and AluOperations.h
-#                        define it as data (the Python generators in Tools/ read them too); Isa,
-#                        Alu, Machine (the reference implementation) and Disassembler build on them
+#   Source/Kestrel/      KestrelCore: the shared definitions, used by everything below
 #   Source/Assembler/    KestrelAssemblerCore (Assemble())  + Main.cpp -> Binary/KestrelAssembler
 #   Source/Compiler/     KestrelCompilerCore (Compile())    + Main.cpp -> Binary/KestrelCompiler
 #   Source/Toolchain/    KestrelToolchain: a .c, .s or .bin to a memory image, in-process
-#   Source/Emulator/     Main.cpp                                      -> Binary/KestrelEmulator
-#   Source/Simulator/    the circuit editor and gate-level simulator   -> Binary/KestrelSimulator
+#   Source/Emulator/     KestrelEmulatorCore (the reference machine) + Main.cpp -> Binary/KestrelEmulator
+#   Source/Simulator/    KestrelSimulatorCore (the gate-level simulation) + the editor -> Binary/KestrelSimulator
+#   Source/Validator/    emulator vs gate-level computer, same final state? -> Binary/KestrelValidator
 #   Programs/*.s         -> Binary/Programs/*.bin (assembled with our own assembler)
 #   Programs/*.c         -> Binary/Programs/*_c.bin (compiled, then assembled)
-#   Tools/make_*.py      -> Components/*.yaml and *.bin: the hardware, generated at build time
+#   Tools/make_*.py      -> Build/Components/*.yaml and *.bin: the hardware, generated at build time
 #                        (Python 3; target "hardware"). Not in version control.
 #   Tools/eda/kicad.py   -> Build/KiCad/: the hardware as KiCad schematics (target "kicad", optional)
 #
@@ -21,6 +20,7 @@ project(Kestrel16 LANGUAGES C CXX)
 #                        cmake --build Build --target simulate_Fibonacci_c  (gate-level Kestrel16 Computer)
 # Any source, by hand:   Binary/KestrelEmulator --run Programs/Fibonacci.c
 #                        Binary/KestrelSimulator --run "Kestrel16 Computer" --program Programs/Fibonacci.c
+# Check the hardware:    Binary/KestrelValidator Programs/Fibonacci.c
 # Tests:                 ctest --test-dir Build
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -136,74 +136,26 @@ if(MINGW)
 endif()
 
 # ---------------------------------------------------------------------------
-# Libraries: each tool is a library with a thin main, so the others can use it in-process.
-add_library(KestrelCore STATIC
-    Source/Kestrel/Alu.cpp
-    Source/Kestrel/Disassembler.cpp
-    Source/Kestrel/Files.cpp
-    Source/Kestrel/Isa.cpp
-    Source/Kestrel/Machine.cpp
-)
-target_include_directories(KestrelCore PUBLIC ${CMAKE_SOURCE_DIR}/Source)
-target_link_libraries(KestrelCore PUBLIC Kestrel16Build)
-
-add_library(KestrelAssemblerCore STATIC Source/Assembler/Assembler.cpp)
-target_link_libraries(KestrelAssemblerCore PUBLIC KestrelCore)
-
-add_library(KestrelCompilerCore STATIC
-    Source/Compiler/CodeGenerator.cpp
-    Source/Compiler/Compiler.cpp
-    Source/Compiler/Expressions.cpp
-    Source/Compiler/Lexer.cpp
-    Source/Compiler/Parser.cpp
-    Source/Compiler/Preprocessor.cpp
-    Source/Compiler/Program.cpp
-    Source/Compiler/Types.cpp
-)
-target_link_libraries(KestrelCompilerCore PUBLIC KestrelCore)
-
-add_library(KestrelToolchain STATIC Source/Toolchain/Toolchain.cpp)
-target_link_libraries(KestrelToolchain PUBLIC KestrelAssemblerCore KestrelCompilerCore)
-
-# ---------------------------------------------------------------------------
-# Tools
-add_executable(KestrelAssembler Source/Assembler/Main.cpp)
-target_link_libraries(KestrelAssembler PRIVATE KestrelAssemblerCore)
-
-add_executable(KestrelCompiler Source/Compiler/Main.cpp)
-target_link_libraries(KestrelCompiler PRIVATE KestrelCompilerCore)
-
-add_executable(KestrelEmulator Source/Emulator/Main.cpp)
-target_link_libraries(KestrelEmulator PRIVATE KestrelToolchain)
-
-# Circuit editor and simulator. It loads components from Components/, where the generators
-# below write them and the editor saves new ones.
-add_executable(KestrelSimulator
-    Source/Simulator/Circuit.cpp
-    Source/Simulator/ComponentFile.cpp
-    Source/Simulator/Editor.cpp
-    Source/Simulator/EditorCanvas.cpp
-    Source/Simulator/EditorMemory.cpp
-    Source/Simulator/EditorPanels.cpp
-    Source/Simulator/HardwareCheck.cpp
-    Source/Simulator/HeadlessRun.cpp
-    Source/Simulator/Main.cpp
-    Source/Simulator/SelfTest.cpp
-    Source/Simulator/Simulation.cpp
-)
-target_link_libraries(KestrelSimulator PRIVATE KestrelToolchain raylib rlimgui imnodes yaml-cpp::yaml-cpp)
-target_compile_definitions(KestrelSimulator PRIVATE
-    COMPONENTS_PATH="${CMAKE_SOURCE_DIR}/Components/")
+# Components: each has its own CMakeLists.txt. Each tool is a library with a thin main, so the
+# others can use it in-process. Order matters only in that a library comes before its users.
+set(COMPONENTS_DIR ${CMAKE_SOURCE_DIR}/Build/Components)
+add_subdirectory(Source/Kestrel)
+add_subdirectory(Source/Assembler)
+add_subdirectory(Source/Compiler)
+add_subdirectory(Source/Toolchain)
+add_subdirectory(Source/Emulator)
+add_subdirectory(Source/Simulator)
+add_subdirectory(Source/Validator)
 
 # ---------------------------------------------------------------------------
 # The hardware: Tools/make_*.py write the components (yaml netlists) and ROM images into
-# Components/. They read the machine's definition headers, and make_cpu.py reads the components
+# Build/Components/. They read the machine's definition headers, and make_cpu.py reads the components
 # the other two write, so they run in this order.
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
-set(COMPONENTS_DIR ${CMAKE_SOURCE_DIR}/Components)
-set(HARDWARE_NAMES "ALU 16" "Bus Driver 8" "Bus Driver 16" "Control Unit" "Counter 4" "Counter 16"
-    "Decoder 3to8" "Immediate Unit" "Kestrel16 CPU" "Kestrel16 Computer" "Mux 2x4" "Program Counter"
-    "Register 16" "Register File" "Shifter 16" "Status" "Timer")
+set(HARDWARE_NAMES "ALU 16" "Bus Driver 8" "Bus Driver 16" "Clock Stretcher" "Control Unit" "Counter 4"
+    "Counter 16" "Decoder 3to8" "Immediate Unit" "Interrupt Controller" "Kestrel16 CPU" "Kestrel16 Computer"
+    "Mux 2x4" "Program Counter" "Register 16" "Register File" "Shifter 16" "Status" "System Slot"
+    "Terminal Card" "Timer")
 set(HARDWARE_FILES)
 foreach(name ${HARDWARE_NAMES})
     list(APPEND HARDWARE_FILES "${COMPONENTS_DIR}/${name}.yaml")
@@ -266,7 +218,7 @@ foreach(source ${PROGRAM_SOURCES})
         COMMENT "Running ${name}"
     )
     add_custom_target(simulate_${name}
-        COMMAND $<TARGET_FILE:KestrelSimulator> --components ${CMAKE_SOURCE_DIR}/Components
+        COMMAND $<TARGET_FILE:KestrelSimulator> --components ${COMPONENTS_DIR}
                 --run "Kestrel16 Computer" --program ${binary} --stats
         DEPENDS ${binary} KestrelSimulator
         USES_TERMINAL
@@ -311,7 +263,7 @@ foreach(source ${C_PROGRAM_SOURCES})
         COMMENT "Running ${name}_c"
     )
     add_custom_target(simulate_${name}_c
-        COMMAND $<TARGET_FILE:KestrelSimulator> --components ${CMAKE_SOURCE_DIR}/Components
+        COMMAND $<TARGET_FILE:KestrelSimulator> --components ${COMPONENTS_DIR}
                 --run "Kestrel16 Computer" --program ${binary} --stats
         DEPENDS ${binary} KestrelSimulator
         USES_TERMINAL
@@ -338,8 +290,6 @@ endforeach()
 
 # The circuit simulator and the component file format check themselves.
 add_test(NAME simulator_self_test COMMAND KestrelSimulator --self-test)
-# The machine's components (ALU, ...) against the emulator.
-add_test(NAME hardware_check COMMAND KestrelSimulator --components ${CMAKE_SOURCE_DIR}/Components --check-hardware)
 # The KiCad schematics, if KiCad is installed: kicad-cli's netlist of them must match the
 # components net for net, with no ERC errors.
 if(KICAD_CLI)
@@ -348,11 +298,12 @@ if(KICAD_CLI)
     set_tests_properties(kicad_round_trip PROPERTIES TIMEOUT 300)
 endif()
 
-# What each program prints. The ones also listed in GATE_LEVEL_TESTS run on the gate-level
-# computer too, which has to print the same.
+# What each program prints (on the emulator; the validate_ tests below hold the hardware to it).
+set(EXPECTED_Fibonacci "46368.timer interrupts: 109")
 set(EXPECTED_Fibonacci_c "28657 46368")
 set(EXPECTED_Shifts_c "3EFE 1CA6")     # every shift amount, byte and word stores
-set(EXPECTED_Interrupts "1FE4 0708")   # timer interrupts landing on every kind of instruction
+set(EXPECTED_Interrupts "3390 1065")   # timer interrupts landing on every kind of instruction
+set(EXPECTED_IoBus "00A5 0000 0000 0001 0000 0000 0000 0034 0000 0000")  # the system slot's registers
 # The shell reads commands: type a couple in, and --run stops once they run out.
 if(EXISTS ${CMAKE_SOURCE_DIR}/Programs/Shell.c)
     add_test(NAME program_Shell_c COMMAND ${CMAKE_COMMAND} "-DCOMMAND=$<TARGET_FILE:KestrelEmulator>;--run;${PROGRAM_OUTPUT_DIR}/Shell_c.bin"
@@ -360,16 +311,24 @@ if(EXISTS ${CMAKE_SOURCE_DIR}/Programs/Shell.c)
              -P ${CMAKE_SOURCE_DIR}/Tests/RunWithInput.cmake)
     set_tests_properties(program_Shell_c PROPERTIES PASS_REGULAR_EXPRESSION "42.*lertseK")
 endif()
-set(GATE_LEVEL_TESTS Fibonacci_c Shifts_c Interrupts)
-foreach(name Fibonacci_c Shifts_c Interrupts)
+foreach(name Fibonacci Fibonacci_c Shifts_c Interrupts IoBus)
     if(TEST program_${name})
         set_tests_properties(program_${name} PROPERTIES PASS_REGULAR_EXPRESSION "${EXPECTED_${name}}")
     endif()
 endforeach()
-foreach(name ${GATE_LEVEL_TESTS})
-    if(TEST program_${name})
-        add_test(NAME simulate_${name} COMMAND KestrelSimulator --components ${CMAKE_SOURCE_DIR}/Components
-                 --run "Kestrel16 Computer" --program ${PROGRAM_OUTPUT_DIR}/${name}.bin)
-        set_tests_properties(simulate_${name} PROPERTIES PASS_REGULAR_EXPRESSION "${EXPECTED_${name}}" TIMEOUT 600)
+
+# Differential tests: each program, built from source, has to end in the same state (memory,
+# output, and registers and flags for programs ending in __dump) on the gate-level computer as on
+# the emulator. See ValidatorDesign.md.
+foreach(source ${PROGRAM_SOURCES} ${C_PROGRAM_SOURCES})
+    get_filename_component(name ${source} NAME_WE)
+    get_filename_component(extension ${source} EXT)
+    if(extension STREQUAL ".c")
+        set(name ${name}_c)
     endif()
+    if(name STREQUAL "Shell_c")
+        continue()  # waits for typed commands; it never halts
+    endif()
+    add_test(NAME validate_${name} COMMAND KestrelValidator --components ${COMPONENTS_DIR} ${source})
+    set_tests_properties(validate_${name} PROPERTIES TIMEOUT 600)
 endforeach()
