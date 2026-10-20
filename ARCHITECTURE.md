@@ -11,30 +11,32 @@ This document describes how the Kestrel16 software is organized: what each piece
 ```
         Source/Kestrel/*.h definitions  ◄──── Tools/definitions.py ──► Tools/make_*.py ──► Build/Components/
                     │
-              KestrelCore  (Isa, Alu, Machine, Disassembler, Files)
+              KestrelCore  (Isa, Disassembler, Files: shared definitions)
                ┌────┴─────────────┐
    KestrelAssemblerCore    KestrelCompilerCore
                └────┬─────────────┘
              KestrelToolchain  (.c / .s / .bin → memory image)
                ┌────┴─────────────┐
-      KestrelEmulator      KestrelSimulatorCore  (circuits, YAML, gate simulation; ImGui, yaml-cpp)
-                           ┌──────┴──────────┐
-                  KestrelSimulator     KestrelValidator  (emulator vs gate level, ValidatorDesign.md)
-                  (the editor: raylib, imnodes)
+   KestrelEmulatorCore     KestrelSimulatorCore  (circuits, YAML, gate simulation; ImGui, yaml-cpp)
+   (Machine, Alu: the      ┌──────┴──────────┐
+    reference machine) KestrelSimulator     │
+           │           (the editor: raylib, │
+     KestrelEmulator    imnodes)            │
+           └──────────── KestrelValidator ──┘  (emulator vs gate level, ValidatorDesign.md)
 
    KestrelAssembler, KestrelCompiler: thin mains over their Core libraries
 ```
 
-Dependencies point downward only. Nothing in `KestrelCore` knows about the assembler, compiler or simulator. The assembler and compiler don't know about each other: the compiler emits assembly *text*, and the toolchain joins them. Only `KestrelSimulatorCore` and its users depend on YAML, and only `KestrelSimulator` on graphics.
+Dependencies point downward only. Nothing in `KestrelCore` knows about the assembler, compiler, emulator or simulator, and only the emulator and the validator link `KestrelEmulatorCore`. The assembler and compiler don't know about each other: the compiler emits assembly *text*, and the toolchain joins them. Only `KestrelSimulatorCore` and its users depend on YAML, and only `KestrelSimulator` on graphics.
 
 | Directory | Target | Owns |
 |---|---|---|
-| `Source/Kestrel/` | `KestrelCore` | The machine: the definition headers, ISA enums and encode/decode, ALU and flags, the reference CPU, the disassembler, file helpers |
+| `Source/Kestrel/` | `KestrelCore` | The shared definitions: the definition headers, ISA enums and encode/decode, the disassembler, file helpers |
 | `Source/Assembler/` | `KestrelAssemblerCore` + `KestrelAssembler` | Assembly text → image (`Assemble()`) |
 | `Source/Compiler/` | `KestrelCompilerCore` + `KestrelCompiler` | C → assembly text (`Compile()`, `Preprocess()`) |
 | `Source/Toolchain/` | `KestrelToolchain` | A program file → a memory image, in-process (`BuildProgram()`) |
-| `Source/Emulator/` | `KestrelEmulator` | The console as a `Terminal`, the CLI, tracing |
-| `Source/Simulator/` | `KestrelSimulatorCore` + `KestrelSimulator` | The circuit model, YAML files and the gate simulation (core); the editor, the self-test and hardware check |
+| `Source/Emulator/` | `KestrelEmulatorCore` + `KestrelEmulator` | The reference machine: the CPU (`Machine`), the ALU and flags (core); the console as a `Terminal`, the CLI, tracing |
+| `Source/Simulator/` | `KestrelSimulatorCore` + `KestrelSimulator` | The circuit model, YAML files and the gate simulation (core); the editor and the self-test |
 | `Source/Validator/` | `KestrelValidator` | Differential testing: a program on the emulator and on the gate-level computer must end in the same state |
 | `Tools/` | (Python) | Generates the hardware components and microcode ROMs into `Build/Components/` |
 | `Programs/` | (CMake) | Example and test programs, built into `Binary/Programs/` |
@@ -42,7 +44,7 @@ Dependencies point downward only. Nothing in `KestrelCore` knows about the assem
 
 ## Boundaries to defend
 
-1. **The machine is defined once.** Opcodes, functions, conditions, field layout, the memory map and the hardware ALU codes live only in `Instructions.h`, `MemoryMap.h` and `AluOperations.h`. These files hold **definitions only**: one macro call per line, with plain names, numbers and `"quoted"` text, because Python parses them with a regex. Never hard-code an opcode, an address or a condition number anywhere else, in C++ or in Python. Read it from `Isa.h` / `Alu.h` or from `definitions.py`.
+1. **The machine is defined once.** Opcodes, functions, conditions, field layout, the memory map and the hardware ALU codes live only in `Instructions.h`, `MemoryMap.h` and `AluOperations.h`. These files hold **definitions only**: one macro call per line, with plain names, numbers and `"quoted"` text, because Python parses them with a regex. Never hard-code an opcode, an address or a condition number anywhere else, in C++ or in Python. Read it from `Isa.h` or from `definitions.py`.
 
 2. **Libraries don't do process things.** Core libraries never call `exit`, never print, and never parse `argv`. Errors come back as values: `AssemblyResult::errors`, `CompileResult::error` and `warnings`, and `StepResult`. Only `Main.cpp` files (and `BuildProgram`'s diagnostics stream) touch stdout and stderr. This is what lets the emulator and simulator build programs in-process. Keep it that way.
 
@@ -58,7 +60,6 @@ Dependencies point downward only. Nothing in `KestrelCore` knows about the assem
 
 7. **Behaviour is pinned by tests.**
    - Each program in `Programs/` has expected output in `CMakeLists.txt`. Each also has a `validate_<name>` test: `KestrelValidator` runs it on the emulator and the gate-level computer, which must end with the same memory, output and (for programs ending in `__dump`) registers and flags.
-   - `--check-hardware` holds the ALU, register file and whole computer to `KestrelCore`.
    - A refactor that changes any of these outputs is not a refactor.
 
 ## Where flexibility is built in

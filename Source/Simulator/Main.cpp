@@ -12,7 +12,6 @@
 //   KestrelSimulator                     run the editor
 //   KestrelSimulator --components DIR    load and save components in DIR
 //   KestrelSimulator --self-test         check the simulator without opening a window
-//   KestrelSimulator --check-hardware    check the machine's components against the emulator
 //   KestrelSimulator --screenshot FILE   render a few frames, save a PNG, and exit
 //   KestrelSimulator --run COMPONENT --program FILE
 //                                        simulate without a window; the Terminal prints to
@@ -31,7 +30,7 @@ using namespace Kestrel;
 
 static int Usage(const char* program, int status) {
     fprintf(stderr,
-            "usage: %s [--components DIR] [--self-test] [--check-hardware] [--screenshot FILE] [--simulate]\n"
+            "usage: %s [--components DIR] [--self-test] [--screenshot FILE] [--simulate]\n"
             "       %s [--components DIR] --run COMPONENT [--program FILE] [--until PIN]... [--fail-on PIN]...\n"
             "                             [--max-cycles N] [--stats]\n"
             "--run simulates COMPONENT without a window: its Terminal prints to stdout, and piped stdin is typed into it.\n"
@@ -54,9 +53,6 @@ int main(int argc, char** argv) {
         std::string argument = argv[index];
         if (argument == "--self-test") {
             return RunSelfTest();
-        }
-        if (argument == "--check-hardware") {
-            return RunHardwareCheck();
         }
         if (argument == "--components" && index + 1 < argc) {
             componentsDirectory = argv[++index];

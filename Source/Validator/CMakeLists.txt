@@ -7,4 +7,4 @@ add_executable(KestrelValidator
     SimulatorTarget.cpp
     State.cpp
 )
-target_link_libraries(KestrelValidator PRIVATE KestrelToolchain KestrelSimulatorCore)
+target_link_libraries(KestrelValidator PRIVATE KestrelEmulatorCore KestrelToolchain KestrelSimulatorCore)
