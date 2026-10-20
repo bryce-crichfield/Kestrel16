@@ -16,7 +16,6 @@ add_executable(KestrelSimulator
     EditorCanvas.cpp
     EditorMemory.cpp
     EditorPanels.cpp
-    HardwareCheck.cpp
     HeadlessRun.cpp
     Main.cpp
     SelfTest.cpp

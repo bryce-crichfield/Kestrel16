@@ -2,7 +2,7 @@
 
 #include "Targets.h"
 
-#include "Kestrel/Machine.h"
+#include "Emulator/Machine.h"
 
 #include <algorithm>
 #include <deque>

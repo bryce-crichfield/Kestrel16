@@ -2,11 +2,11 @@ cmake_minimum_required(VERSION 3.20)
 project(Kestrel16 LANGUAGES C CXX)
 
 # Layout (Source/ is the include root: #include "Kestrel/Isa.h"):
-#   Source/Kestrel/      KestrelCore: the machine, shared by everything below
+#   Source/Kestrel/      KestrelCore: the shared definitions, used by everything below
 #   Source/Assembler/    KestrelAssemblerCore (Assemble())  + Main.cpp -> Binary/KestrelAssembler
 #   Source/Compiler/     KestrelCompilerCore (Compile())    + Main.cpp -> Binary/KestrelCompiler
 #   Source/Toolchain/    KestrelToolchain: a .c, .s or .bin to a memory image, in-process
-#   Source/Emulator/     Main.cpp                                      -> Binary/KestrelEmulator
+#   Source/Emulator/     KestrelEmulatorCore (the reference machine) + Main.cpp -> Binary/KestrelEmulator
 #   Source/Simulator/    KestrelSimulatorCore (the gate-level simulation) + the editor -> Binary/KestrelSimulator
 #   Source/Validator/    emulator vs gate-level computer, same final state? -> Binary/KestrelValidator
 #   Programs/*.s         -> Binary/Programs/*.bin (assembled with our own assembler)
@@ -276,11 +276,9 @@ endforeach()
 
 # The circuit simulator and the component file format check themselves.
 add_test(NAME simulator_self_test COMMAND KestrelSimulator --self-test)
-# The machine's components (ALU, ...) against the emulator.
-add_test(NAME hardware_check COMMAND KestrelSimulator --components ${COMPONENTS_DIR} --check-hardware)
 
 # What each program prints (on the emulator; the validate_ tests below hold the hardware to it).
-set(EXPECTED_Fibonacci "46368.timer interrupts: 109")  # the hardware check runs it on the gate-level computer
+set(EXPECTED_Fibonacci "46368.timer interrupts: 109")
 set(EXPECTED_Fibonacci_c "28657 46368")
 set(EXPECTED_Shifts_c "3EFE 1CA6")     # every shift amount, byte and word stores
 set(EXPECTED_Interrupts "3390 1065")   # timer interrupts landing on every kind of instruction

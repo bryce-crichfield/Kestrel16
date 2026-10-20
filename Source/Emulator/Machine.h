@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "Isa.h"
+#include "Kestrel/Isa.h"
 
 #include <array>
 #include <cstdint>

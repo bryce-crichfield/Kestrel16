@@ -56,6 +56,13 @@ enum class Condition : uint8_t {
 #undef KestrelCondition
 };
 
+// The hardware ALU's own operation codes (AluOperations.h), which its microcode picks.
+enum class AluOperation : uint8_t {
+#define KestrelAluOperation(name, code) name = code,
+#include "AluOperations.h"
+#undef KestrelAluOperation
+};
+
 enum class InstructionForm : uint8_t {
 #define KestrelForm(name) name,
 #include "Instructions.h"

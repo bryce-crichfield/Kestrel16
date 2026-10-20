@@ -1,4 +1,4 @@
-// KestrelEmulator -- runs Kestrel16 programs on the reference machine (Source/Kestrel/Machine.h).
+// KestrelEmulator -- runs Kestrel16 programs on the reference machine (Source/Emulator/Machine.h).
 //
 // Run:    KestrelEmulator prog.bin     load raw little-endian binary at 0x0000
 //         KestrelEmulator              run the built-in demo (prints a greeting)
@@ -10,10 +10,10 @@
 // The UART is the console: what the program prints goes to stdout, and what is typed (or
 // piped in) is what it reads.
 
-#include "Kestrel/Alu.h"
+#include "Emulator/Alu.h"
+#include "Emulator/Machine.h"
 #include "Kestrel/Disassembler.h"
 #include "Kestrel/Files.h"
-#include "Kestrel/Machine.h"
 #include "Toolchain/Toolchain.h"
 
 #include <algorithm>

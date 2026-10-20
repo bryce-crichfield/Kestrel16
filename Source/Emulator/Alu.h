@@ -1,9 +1,9 @@
 // Alu.h -- the Kestrel16's arithmetic and its flags, as the emulator (the reference) computes them.
-// The hardware check holds the gate-level ALU to these.
+// The validator holds the gate-level computer to the results they produce.
 
 #pragma once
 
-#include "Isa.h"
+#include "Kestrel/Isa.h"
 
 #include <cstdint>
 
@@ -31,12 +31,5 @@ uint16_t AluShift(ShiftKind kind, uint16_t value, unsigned amount, uint8_t& flag
 uint16_t SignExtendByte(uint16_t value);
 
 bool ConditionHolds(int condition, uint8_t flags);  // false for a condition that doesn't exist
-
-// The hardware ALU's own operation codes (AluOperations.h), which its microcode picks.
-enum class AluOperation : uint8_t {
-#define KestrelAluOperation(name, code) name = code,
-#include "AluOperations.h"
-#undef KestrelAluOperation
-};
 
 }  // namespace Kestrel

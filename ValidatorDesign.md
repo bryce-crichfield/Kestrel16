@@ -76,7 +76,7 @@ class Target {
 - **SimulatorTarget** wraps the simulation of `Kestrel16 Computer`. The limit counts clock cycles. It touches the circuit only through what the debug port offers: the RAM components' contents (standing in for bus access), the reset and clock inputs, a HALTED output, and the UART. **It never reaches into CPU internals**, even though in the simulator it could. That's the rule that keeps the hardware path open.
 - **HardwareTarget** (later) is the same interface over a serial link to the microcontroller.
 
-`ArchState` and the comparison live in `KestrelCore`; the targets live with the validator. The validator links the emulator core and the simulator core, so the simulation code (`Simulation`, `Circuit`, `ComponentFile`) needs to be a library without the editor and raylib.
+`ArchState` and the comparison live in the validator; the targets live with the validator. The validator links the emulator core and the simulator core, so the simulation code (`Simulation`, `Circuit`, `ComponentFile`) needs to be a library without the editor and raylib.
 
 ## The dump routine
 
