@@ -18,6 +18,14 @@ python Tools/eda/kicad.py "Register 16" --check
 "C:/Program Files/KiCad/9.0/bin/python.exe" Tools/eda/route.py "Build/KiCad/Register 16"
 ```
 
+To place onto a fixed 3U Eurocard (160 x 100 mm, with the DIN 41612 connector already on the left edge) instead
+of a board sized to fit, make the template once and pass it to the placer. Each chip gets a slot of its own size plus `--gap`; shrink the gap if the chips don't fit:
+
+```sh
+"C:/Program Files/KiCad/9.0/bin/python.exe" Tools/eda/template.py
+"C:/Program Files/KiCad/9.0/bin/python.exe" Tools/eda/place.py "Build/KiCad/Register 16" --template "Tools/eda/templates/Eurocard 3U.kicad_pcb"
+```
+
 `kicad.py` runs under any Python 3 with PyYAML. `place.py` and `route.py` need `pcbnew`, which only KiCad's own Python
 has. `route.py` also needs Java 21 or later and KiCad's Freerouting plugin, which provides the jar. Any recent JDK
 works, for example `cs java-home --jvm temurin:21`. The script looks for Java in `--java`, then `JAVA_HOME`, then
@@ -32,7 +40,9 @@ For Register 16, placement takes under a minute. Routing takes about 30 s for ea
 | `netlist.py` | Reads `Components/*.yaml` into nets, naming pins the way the simulator does |
 | `parts.yaml` | Maps each primitive to a real part: symbol, footprint, pin numbers, power pins, and ties for unused inputs |
 | `kicad.py` | Writes the schematic, one sheet per component. `--check` proves it matches the netlist |
-| `place.py` | Anneals the chips into a grid, adds caps and headers, and writes 4-layer boards |
+| `cards.py` | Splits the design into the cards `hdl.card()` tags, and reports each card's connector pins and each crossing net's drivers |
+| `template.py` | Writes `templates/Eurocard 3U.kicad_pcb`: the card outline and its DIN 41612 connector, for `place.py --template` |
+| `place.py` | Anneals the chips into a grid, adds caps, keeps the template's connector, and writes 4-layer boards |
 | `route.py` | Routes the candidates with Freerouting, scores them, runs DRC, and writes the fabrication files |
 | `kicad_env.py` | Finds KiCad, and holds the pcbnew workarounds below |
 | `sexpr.py` | Reads and writes KiCad's S-expression files |
@@ -59,7 +69,7 @@ compares it net for net with the flattened source.
 **Placement (`place.py`).** The board is a grid of slots, about 1.4 per chip. Every DIP lies on its side with pin 1
 at the bottom left. Simulated annealing swaps chips between slots to minimize the half-perimeter wirelength of the
 signal nets. GND and VCC are left out, since they are planes. Several independent anneals run, and the best few
-become candidates. Headers and the bulk cap sit fixed along the bottom edge, so their pins pull connected chips
+become candidates. The bulk cap (and any header) sits fixed along the bottom edge, so their pins pull connected chips
 toward them. Each decoupling cap goes just past its chip's VCC pin. The boards have 4 layers: signals on F.Cu and
 B.Cu, In1 a GND plane and In2 a VCC plane.
 

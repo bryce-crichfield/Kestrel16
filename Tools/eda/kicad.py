@@ -4,12 +4,14 @@
 
 Each component becomes a .kicad_sch file. A component used inside another becomes a hierarchical sheet,
 and one file serves every instance, so four Register 16s share one sheet with four sets of references.
-The top component's ports become global labels.
+The top component is a card: its ports become global labels, and its backplane connector, P1, is drawn with the
+same footprint as the card template's. Its pins are left unconnected until a pin map assigns the ports to them.
 
 Nothing is wired with lines. Every pin gets a label naming its net, and pins with the same label are
 connected. A net is named after its port if it has one, GND or VCC if it is tied there (power symbols),
 or after the pin that drives it. Gates of one kind in a sheet are packed into packages unit by unit.
-Leftover units are tied off below the drawing, next to each package's power unit.
+Leftover units are tied off below the drawing, next to each package's power unit. A child component with
+an entry in parts.yaml (Decoder 3to8, Register 16, ...) gets no sheet: its real chips go below the drawing.
 
 --check proves the schematic matches the netlist. kicad-cli exports the schematic's netlist, which is
 mapped back through the references and pin numbers recorded here and compared net by net with the
@@ -41,6 +43,11 @@ FONT = [Sym('effects'), [Sym('font'), [Sym('size'), 1.27, 1.27]]]
 HIDDEN = [Sym('effects'), [Sym('font'), [Sym('size'), 1.27, 1.27]], [Sym('hide'), Sym('yes')]]
 NAMESPACE = uuid.UUID('9b8a3c52-27f4-4a8e-9a43-6f1e0c3f5d10')
 POWER_KINDS = {'Low': 'GND', 'High': 'VCC'}
+# Every top component is a card, and every card plugs into the backplane through this, as on the card template.
+CONNECTOR = ('Connector:DIN41612_03x32_C_Split', 'Connector_DIN:DIN41612_C_3x32_Male_Horizontal_THT')
+# ERC findings the unmapped connector causes: the card's inputs drive nothing. Unwired inputs inside are tied to GND,
+# so an undriven pin can only be on a card input's net.
+UNMAPPED = {'pin_not_driven', 'label_dangling', 'global_label_dangling'}
 
 
 def kicad_name(name):
@@ -135,6 +142,7 @@ class Placed:
         self.logical = logical or {}  # hardware pin -> (node id, logical pin)
         self.fields = {}              # more properties, like a memory's Image
         self.uuid = None
+        self.reference = None         # a fixed reference, like the connector's P1; otherwise annotated
 
     def pin_point(self, number):
         _, x, y, angle, _ = self.symbol.pins[str(number)]
@@ -237,6 +245,7 @@ class Sheet:
             elif node.kind not in ('Input', 'Output', 'Component') and node.kind not in POWER_KINDS:
                 raise ValueError('%s: no part in parts.yaml for %s' % (self.component.name, node.kind))
         self.leftovers = []
+        self.package_parts = {}  # package -> its chip's entry, for chips of components parts.yaml maps
         for kind, kind_nodes in by_kind.items():
             part = parts[kind]
             symbol = symbols.get(part['symbol'])
@@ -261,8 +270,11 @@ class Sheet:
             for slot in range(count % slots and slots - count % slots):
                 self.leftovers.append((kind, part, symbol, (kind, count // slots), count % slots + slot))
 
-        # Child components, as sheets: inputs down the left edge, outputs down the right.
+        # Child components, as sheets: inputs down the left edge, outputs down the right. Those parts.yaml maps
+        # to real chips are left out here and placed below, as those chips.
         for node in self.component.children():
+            if node.component in parts:
+                continue
             at = to_mm(node.at)
             rows = max(len(node.inputs), len(node.outputs), 1)
             size = (30.48, (rows + 1) * GRID)
@@ -277,8 +289,13 @@ class Sheet:
             self.sheets.append((node, sheet_uuid, at, size, pins))
             self.extend(at[0] + size[0], at[1] + size[1])
 
+        # Below the drawing, one chip per cell: the chips of components parts.yaml maps, in place of their sheets.
+        for node in self.component.children():
+            if node.component in parts:
+                self.mapped(node, parts[node.component], endpoints, inputs, outputs)
+
         # Nets. Port nets carry the port's name; tied nets are GND or VCC; the rest are named after a driver.
-        port_kind = 'local' if self.top else 'hier'  # the top's ports go to headers, below
+        port_kind = 'global' if self.top else 'hier'  # the top's ports go to the backplane connector, once mapped
         seen = set()
         for net in self.component.nets:
             names, points = [], []
@@ -317,7 +334,7 @@ class Sheet:
                     self.no_connect((x, y))
 
         if self.top:
-            self.headers()
+            self.connector()
 
         # Below the drawing: leftover units, tied off, then each package's power unit.
         for kind, part, symbol, package, slot in self.leftovers:
@@ -335,9 +352,9 @@ class Sheet:
         for package in list(self.packages):
             units = [placed for placed in self.placed if placed.package == package]
             first = units[0]
-            if package[0] not in parts:
+            part = self.package_parts.get(package) or parts.get(package[0])
+            if not part:
                 continue
-            part = parts[package[0]]
             power = part.get('power', {})
             power_unit = first.symbol.unit_of(power.values()) if power else None
             holder = next((placed for placed in units if placed.unit == power_unit), None)
@@ -362,20 +379,70 @@ class Sheet:
         self.attach(('power', 'VCC'), *placed.pin_point(1))
         self.attach(('power', 'GND'), *placed.pin_point(2))
 
-    def headers(self):
-        """The top component's ports, inputs then outputs, on 40-pin headers right of the drawing."""
-        ports = [pin for kind in ('Input', 'Output') for pin in self.component.port_bits(kind)]
-        x, y = snap(self.right + SLOT), MARGIN
-        for start in range(0, len(ports), 40):
-            chunk = ports[start:start + 40]
-            symbol = self.project.symbols.get('Connector_Generic:Conn_01x%02d' % len(chunk))
-            at = (x, snap(y + len(chunk) * GRID / 2))
-            placed = self.place(Placed(symbol, 1, at, ('header', start), 'Ports',
-                                       'Connector_PinHeader_2.54mm:PinHeader_1x%02d_P2.54mm_Vertical' % len(chunk),
-                                       {str(index + 1): ('port', pin) for index, pin in enumerate(chunk)}))
-            for index, pin in enumerate(chunk):
-                self.attach(('local', kicad_name(pin)), *placed.pin_point(index + 1))
-            y += (len(chunk) + 4) * GRID
+    def connector(self):
+        """The card's backplane connector, P1, right of the drawing: one unit per row. Its footprint matches the
+        one on the card template, so place.py hands the template's P1 these pads' nets. Until a pin map says which
+        port goes on which pin, every pin is left unconnected and the ports are global labels only."""
+        symbol = self.project.symbols.get(CONNECTOR[0])
+        x = snap(self.right + SLOT)
+        for unit in range(1, symbol.units + 1):
+            placed = Placed(symbol, unit, (x + (unit - 1) * SLOT, MARGIN), ('P', 'connector'), 'DIN 41612 96-pin',
+                            CONNECTOR[1])
+            placed.reference = 'P1'
+            low = min(-y for u, _, y, _, _ in symbol.pins.values() if u == unit)
+            placed.at = (placed.at[0], snap(MARGIN - low))  # its top pin on the margin
+            self.place(placed)
+            for number in symbol.unit_pins(unit):
+                self.no_connect(placed.pin_point(number)[0])
+
+    def chip_cell(self, symbol):
+        """Where the next mapped chip goes: in rows below the drawing, each row as tall as its tallest chip, so
+        no two chips' pins touch. Called before anything takes a cell, which then start below these rows."""
+        ys = [-pin[2] for pin in symbol.pins.values()]
+        xs = [pin[1] for pin in symbol.pins.values()]
+        width, top, bottom = snap(max(xs) - min(xs) + 2 * SLOT / 2), min(ys), max(ys)
+        if not hasattr(self, 'row'):
+            self.row = [MARGIN, snap(self.bottom + SLOT), 0]  # x, y of the row's top, its height
+        x, y, height = self.row
+        if x + width > max(self.right, MARGIN + 8 * SLOT):
+            x, y, height = MARGIN, snap(y + height + GRID * 4), 0
+        at = (snap(x + width / 2), snap(y - top))
+        self.row = [x + width, y, max(height, bottom - top)]
+        return at
+
+    def mapped(self, node, entry, endpoints, inputs, outputs):
+        """A component placed as the chips its parts.yaml entry lists. Each chip's pins name either one of the
+        component's port bits or, starting with '.', a net between its chips, like a register's stored bits."""
+        internal = {}  # '.name' -> [(point, angle)]
+        wired = set()
+        for index, chip in enumerate(entry['chips']):
+            symbol = self.project.symbols.get(chip['symbol'])
+            package = (node.component, node.id, index)
+            self.package_parts[package] = chip
+            by_unit = {}
+            for pin, numbers in chip['pins'].items():
+                for number in numbers if isinstance(numbers, list) else [numbers]:
+                    by_unit.setdefault(symbol.pins[str(number)][0] or 1, []).append((pin, number))
+            for unit, pins in sorted(by_unit.items()):
+                logical = {str(number): (node.id, pin) for pin, number in pins if not pin.startswith('.')}
+                placed = self.place(Placed(symbol, unit, self.chip_cell(symbol), package, chip['value'],
+                                           chip.get('footprint', ''), logical))
+                for pin, number in pins:
+                    if pin.startswith('.'):
+                        internal.setdefault(pin, []).append(placed.pin_point(number))
+                    else:
+                        endpoints.setdefault((node.id, pin), []).append(placed.pin_point(number))
+                        wired.add(pin)
+                self.tie_fixed(chip, placed, 0, node)
+        missing = [pin for pin in node.pins() if pin not in wired]
+        if missing:
+            raise ValueError('%s: parts.yaml gives %s no pin for %s' % (self.component.name, node.component,
+                                                                        ', '.join(missing)))
+        inputs.update((node.id, pin) for pin in node.inputs)
+        outputs.update((node.id, pin) for pin in node.outputs)
+        for name, points in internal.items():
+            for point, angle in points:
+                self.attach(('local', 'n%d_%s' % (node.id, name[1:])), point, angle)
 
     def hardware_pins(self, part, node, slot):
         """(lane, {logical pin: hardware pin number}, extra fields) for each chip one node takes.
@@ -455,6 +522,10 @@ class Project:
         for name, path, ids in order:
             sheet = self.sheets[name]
             for package in sheet.packages:
+                fixed = next((p.reference for p in sheet.placed if p.package == package and p.reference), None)
+                if fixed:
+                    self.references[(name, path, package)] = fixed
+                    continue
                 prefix = package[0] if package[0].startswith('#') else \
                     next(p.symbol.prefix for p in sheet.placed if p.package == package)
                 counters[prefix] = counters.get(prefix, 0) + 1
@@ -532,9 +603,10 @@ class Project:
 # ---------------------------------------------------------------------------
 # The round trip
 
-def flatten(library, top):
+def flatten(library, top, parts=()):
     """The source netlist as nets of primitive pins across the whole hierarchy. Pins are (path, node, pin);
-    GND and VCC stand for Low and High nodes. Unconnected inputs read 0, so they join GND."""
+    GND and VCC stand for Low and High nodes. Unconnected inputs read 0, so they join GND. A component
+    parts.yaml maps to chips is a leaf, like a primitive: its port pins are the chips' pins."""
     parent = {}
 
     def root(key):
@@ -561,7 +633,7 @@ def flatten(library, top):
                     keys.append(POWER_KINDS[node.kind])
                 elif node.kind in ('Input', 'Output'):
                     keys.append(('port', path, pin))
-                elif node.kind == 'Component':
+                elif node.kind == 'Component' and node.component not in parts:
                     keys.append(('port', path + (node_id,), pin))
                 else:
                     keys.append((path, node_id, pin))
@@ -572,11 +644,12 @@ def flatten(library, top):
             for pin in node.inputs:
                 if (node.id, pin) in wired or node.kind == 'Output':
                     continue
-                key = ('port', path + (node.id,), pin) if node.kind == 'Component' else (path, node.id, pin)
-                if node.kind != 'Component':
+                sheet = node.kind == 'Component' and node.component not in parts
+                key = ('port', path + (node.id,), pin) if sheet else (path, node.id, pin)
+                if not sheet:
                     pins.add(key)
                 union(key, 'GND')
-            if node.kind == 'Component':
+            if node.kind == 'Component' and node.component not in parts:
                 visit(node.component, path + (node.id,))
 
     visit(top, ())
@@ -612,7 +685,9 @@ def check(project, directory, cli):
     subprocess.run([cli, 'sch', 'export', 'netlist', '--format', 'kicadsexpr', '-o', netlist_path, top],
                    check=True, capture_output=True)
     exported = read_kicad_netlist(netlist_path, project.pin_map)
-    source = flatten(project.library, project.name)
+    # The top's ports are only labels until a pin map puts them on the connector, so its netlist can't show them.
+    source = {group for group in (frozenset(key for key in group if key[:2] != ('port', ()))
+                                  for group in flatten(project.library, project.name, project.parts)) if len(group) > 1}
     def describe(group):
         return ', '.join(sorted(key if isinstance(key, str) else 'port ' + key[2] if key[0] == 'port' else
                                 ''.join('%d/' % i for i in key[0]) + '%d.%s' % (key[1], key[2]) for key in group))
@@ -632,7 +707,10 @@ def check(project, directory, cli):
     with open(report, encoding='utf-8') as file:
         for sheet in json.load(file).get('sheets', []):
             for violation in sheet.get('violations', []):
-                key = (violation['severity'], violation['type'])
+                severity = violation['severity']
+                if violation['type'] in UNMAPPED:
+                    severity = 'expected'  # the card's ports reach nothing until the connector's pins are mapped
+                key = (severity, violation['type'])
                 counts[key] = counts.get(key, 0) + 1
     for (severity, kind), count in sorted(counts.items()):
         print('  ERC %s: %s x%d' % (severity, kind, count))
@@ -645,7 +723,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('component', help='the top component, e.g. "Kestrel16 Computer"')
     parser.add_argument('-o', '--output', help='project directory (default Build/KiCad/<component>)')
-    parser.add_argument('--components', default=None, help='where the netlists are (default Components/)')
+    parser.add_argument('--components', default=None, help='where the netlists are (default Build/Components/)')
     parser.add_argument('--parts', default=os.path.join(HERE, 'parts.yaml'))
     parser.add_argument('--symbols', default=None, help="KiCad's symbol library directory")
     parser.add_argument('--kicad-cli', default=None)

@@ -2,8 +2,10 @@
 
     python Tools/make_registers.py
 
-Decoder 3to8 (a 74HC138), Register 16 (two 74HC377s plus four 74HC541s) and Register File
-(eight Register 16s: R0-R7 with two read ports and one write port).
+Chip-level parts, each exactly one 74HC chip so tools/eda/parts.yaml can place the real chip: Decoder 3to8 (a
+74HC138), Bus Driver 8 (a 74HC541) and Register 8 (a 74HC377). Built from them: Bus Driver 16, Register 16 (two
+Register 8s plus four Bus Driver 8s) and Register File (eight Register 16s: R0-R7 with two read ports and one
+write port).
 """
 from hdl import *
 
@@ -18,21 +20,52 @@ def make_decoder():
         output('/Y', [nand(bit(n, 0) & bit(n, 1) & bit(n, 2), E) for n in range(8)])
 
 
+def make_bus_driver_8():
+    with component('Bus Driver 8', '8 tri-state buffers: Y = A while /OE is 0, otherwise Y lets go. A 74HC541 '
+                                   '(both of its enables are /OE).'):
+        A = bus_input('A', 8)
+        OE = inputs('/OE')
+        output('Y', [tristate(a, OE) for a in A])
+
+
+def make_bus_driver_16():
+    with component('Bus Driver 16', '16 tri-state buffers: Y = A while /OE is 0, otherwise Y lets go. Two Bus '
+                                    'Driver 8s (74HC541s).'):
+        A = bus_input('A', 16)
+        OE = inputs('/OE')
+        output('Y', bus(drive(A[:8], OE), drive(A[8:], OE)))
+
+
+def make_register_8():
+    with component('Register 8', '8-bit register, a 74HC377: on the rising edge of CLK it loads D if /E is 0 and '
+                                 'keeps its value otherwise.'):
+        D = bus_input('D', 8)
+        E_not, CLK = inputs('/E', 'CLK')
+        take = ~E_not
+        Q = []
+        for d in D:  # next = /E ? Q : D
+            ff = flip_flop(CLK)
+            mux(take, ff.Q, d, select_not=E_not) >> ff.D
+            Q.append(ff.Q)
+        output('Q', Q)
+
+
 def make_register():
     with component('Register 16',
                    '16-bit register. On the rising edge of CLK it loads D if /LOAD is 0 and keeps its value '
                    'otherwise. Two tri-state read ports: QA drives while /OEA is 0, QB while /OEB is 0. '
-                   'In 74HC terms: two 74HC377s and four 74HC541s.'):
+                   'Two Register 8s (74HC377s) and two Bus Driver 16s (four 74HC541s).'):
         D = bus_input('D', 16)
         LOAD_not, CLK, OEA, OEB = inputs('/LOAD', 'CLK', '/OEA', '/OEB')
-        take = ~LOAD_not
-        Q = []
-        for d in D:  # next = /LOAD ? Q : D
-            ff = flip_flop(CLK)
-            mux(take, ff.Q, d, select_not=LOAD_not) >> ff.D
-            Q.append(ff.Q)
-        output('QA', [tristate(q, OEA) for q in Q])
-        output('QB', [tristate(q, OEB) for q in Q])
+        Q = Bus()
+        for half in (D[:8], D[8:]):
+            register = Part('Register 8')
+            half >> register.D
+            LOAD_not >> register['/E']
+            CLK >> register.CLK
+            Q += register.Q
+        output('QA', drive(Q, OEA))
+        output('QB', drive(Q, OEB))
 
 
 def make_register_file():
@@ -65,6 +98,9 @@ def make_register_file():
 
 if __name__ == '__main__':
     make_decoder()
+    make_bus_driver_8()
+    make_bus_driver_16()
+    make_register_8()
     make_register()
     make_register_file()
-    print('wrote Decoder 3to8, Register 16 and Register File')
+    print('wrote Decoder 3to8, Bus Driver 8 and 16, Register 8, Register 16 and Register File')

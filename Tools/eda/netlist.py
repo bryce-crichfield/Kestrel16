@@ -7,7 +7,7 @@ RAM's or Terminal's data pins are one pin each though they appear on both sides.
 import os
 import yaml
 
-COMPONENTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'Components')
+COMPONENTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'Build', 'Components')
 
 GATE_PINS = {
     'Buffer': (['A'], ['Y']), 'Not': (['A'], ['Y']), 'And': (['A', 'B'], ['Y']), 'Or': (['A', 'B'], ['Y']),

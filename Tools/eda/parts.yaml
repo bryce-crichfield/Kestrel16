@@ -108,3 +108,68 @@ Terminal:                         # stands in for a UART; a header for now
   value: Terminal
   footprint: Connector_PinHeader_2.54mm:PinHeader_1x13_P2.54mm_Vertical
   pins: {RS: 1, /CE: 2, /OE: 3, /WE: 4, D0: 5, D1: 6, D2: 7, D3: 8, D4: 9, D5: 10, D6: 11, D7: 12, IRQ: 13}
+
+# ---------------------------------------------------------------------------
+# Components placed as real chips: the chip-level parts, each exactly one chip. A component named here is not drawn from its gates: kicad.py places the chips
+# listed under chips instead, and the round-trip check treats it as one part. The simulator still runs its gates,
+# so each mapping must behave exactly like the component; check it against the datasheet when adding one.
+# Each chip's pins map a name to a hardware pin, or a list of them: a port bit of the component (D0, /OE, ...)
+# or, starting with '.', a net between the component's own chips. Every port bit must land on some pin.
+
+.chips:                           # the chips the entries below use; this key is not a component
+  hc138: &hc138
+    symbol: 74xx:74LS138
+    value: 74HC138
+    footprint: Package_DIP:DIP-16_W7.62mm
+    power: {VCC: 16, GND: 8}
+  hc157: &hc157
+    symbol: 74xx:74LS157
+    value: 74HC157
+    footprint: Package_DIP:DIP-16_W7.62mm
+    power: {VCC: 16, GND: 8}
+  hc541: &hc541
+    symbol: 74xx:74LS541
+    value: 74HC541
+    footprint: Package_DIP:DIP-20_W7.62mm
+    power: {VCC: 20, GND: 10}
+  hc169: &hc169
+    symbol: 74xx:74LS169
+    value: 74HC169
+    footprint: Package_DIP:DIP-16_W7.62mm
+    power: {VCC: 16, GND: 8}
+  hc377: &hc377
+    symbol: 74xx:74LS377
+    value: 74HC377
+    footprint: Package_DIP:DIP-20_W7.62mm
+    power: {VCC: 20, GND: 10}
+
+Decoder 3to8:                     # /Yn low when A = n and E is 1
+  chips:
+    - <<: *hc138
+      pins: {A0: 1, A1: 2, A2: 3, E: 6,
+             /Y0: 15, /Y1: 14, /Y2: 13, /Y3: 12, /Y4: 11, /Y5: 10, /Y6: 9, /Y7: 7}
+      tie: {GND: [4, 5]}          # /E1 and /E2 enabled
+
+Mux 2x4:                          # Yn = S ? Bn : An
+  chips:
+    - <<: *hc157
+      pins: {S: 1, A0: 2, B0: 3, Y0: 4, A1: 5, B1: 6, Y1: 7, A2: 11, B2: 10, Y2: 9, A3: 14, B3: 13, Y3: 12}
+      tie: {GND: [15]}            # /E enabled
+
+Bus Driver 8:                     # Y = A while /OE is 0
+  chips:
+    - <<: *hc541
+      pins: {/OE: [1, 19], A0: 2, A1: 3, A2: 4, A3: 5, A4: 6, A5: 7, A6: 8, A7: 9,
+             Y0: 18, Y1: 17, Y2: 16, Y3: 15, Y4: 14, Y5: 13, Y6: 12, Y7: 11}
+
+Register 8:                       # loads D on CLK's rising edge while /E is 0
+  chips:
+    - <<: *hc377
+      pins: {/E: 1, CLK: 11, D0: 3, D1: 4, D2: 7, D3: 8, D4: 13, D5: 14, D6: 17, D7: 18,
+             Q0: 2, Q1: 5, Q2: 6, Q3: 9, Q4: 12, Q5: 15, Q6: 16, Q7: 19}
+
+Counter 4:                        # synchronous load and count; /RCO chains into the next one's /ENT
+  chips:
+    - <<: *hc169
+      pins: {UP: 1, CLK: 2, D0: 3, D1: 4, D2: 5, D3: 6, /ENP: 7, /LOAD: 9, /ENT: 10,
+             Q0: 14, Q1: 13, Q2: 12, Q3: 11, /RCO: 15}

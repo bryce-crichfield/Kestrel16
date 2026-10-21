@@ -5,7 +5,8 @@ Run it with KiCad's own Python, which has the pcbnew module:
   "C:/Program Files/KiCad/9.0/bin/python.exe" Tools/eda/place.py "Build/KiCad/Register 16"
 
 It reads the netlist kicad-cli exports from the schematic, freshly each run, so it sees exactly what the schematic
-has. The board area is a grid of slots, one chip per slot, with spare slots so chips can move.
+has. Each chip gets a slot sized from its own footprint plus --gap, and the slots, with spares so chips can move,
+are packed onto the board in rows, tallest first. A chip moves only between slots of its own size.
 The anneal swaps or moves chips to shorten the weighted half-perimeter of every signal net; GND and VCC are skipped,
 since they are the inner planes. Several independent anneals run. Then each 100nF cap goes beside a chip's VCC pin,
 the headers go along the bottom edge with the bulk cap, and the board is written as <project>.kicad_pcb: 4 layers,
@@ -70,7 +71,7 @@ class Design:
         return pcbnew.FOOTPRINT(self.footprints[self.parts[reference][1]])
 
     def kind(self, reference):
-        if reference.startswith('J'):
+        if reference.startswith(('J', 'P')):  # headers and the backplane connector
             return 'header'
         if reference.startswith('C'):
             return 'bulk' if self.parts[reference][0] != '100nF' else 'decoupling'
@@ -95,11 +96,17 @@ def pad_offsets(footprint, angle):
 # The anneal
 
 class Placer:
-    """Chips in slots. fixed maps (reference, pad) to a point that never moves, like a header pin."""
+    """Chips in slots. fixed maps (reference, pad) to a point that never moves, like a header pin.
+    Slots come in sizes: classes[i] is chip i's slot size, and slot_classes[s] is slot s's. A chip only
+    moves to a slot of its own size."""
 
-    def __init__(self, chips, offsets, nets, fixed, cols, rows, pitch, origin):
-        self.chips, self.cols, self.rows, self.pitch, self.origin = chips, cols, rows, pitch, origin
-        self.slots = cols * rows
+    def __init__(self, chips, offsets, nets, fixed, centres, classes, slot_classes):
+        self.chips, self.centres = chips, centres
+        self.slots = len(centres)
+        self.classes = classes
+        self.class_slots = {}
+        for slot, size in enumerate(slot_classes):
+            self.class_slots.setdefault(size, []).append(slot)
         index = {chip: i for i, chip in enumerate(chips)}
         # A net is a list of (chip index or -1, dx, dy): a pin's offset from its slot centre, or a fixed point.
         self.nets = []
@@ -118,8 +125,7 @@ class Placer:
                 self.chip_nets[chip].append(n)
 
     def centre(self, slot):
-        return (self.origin[0] + (slot % self.cols + 0.5) * self.pitch[0],
-                self.origin[1] + (slot // self.cols + 0.5) * self.pitch[1])
+        return self.centres[slot]
 
     def hpwl(self, n):
         xs, ys = [], []
@@ -134,8 +140,14 @@ class Placer:
         return max(xs) - min(xs) + max(ys) - min(ys)
 
     def anneal(self, rng, moves, start=None):
-        self.centres = [self.centre(slot) for slot in range(self.slots)]
-        self.slot_of = list(start) if start else rng.sample(range(self.slots), len(self.chips))
+        if start:
+            self.slot_of = list(start)
+        else:  # each size's chips in a random sample of that size's slots
+            self.slot_of = [None] * len(self.chips)
+            for size, slots in self.class_slots.items():
+                members = [chip for chip, c in enumerate(self.classes) if c == size]
+                for chip, slot in zip(members, rng.sample(slots, len(members))):
+                    self.slot_of[chip] = slot
         occupant = [-1] * self.slots
         for chip, slot in enumerate(self.slot_of):
             occupant[slot] = chip
@@ -145,7 +157,7 @@ class Placer:
         cooling = (1e-3 / temperature) ** (1 / moves) if moves and temperature > 1e-3 else 1
         for _ in range(moves):
             a = rng.randrange(len(self.chips))
-            old_slot, new_slot = self.slot_of[a], rng.randrange(self.slots)
+            old_slot, new_slot = self.slot_of[a], rng.choice(self.class_slots[self.classes[a]])
             temperature *= cooling
             if new_slot == old_slot:
                 continue
@@ -171,10 +183,61 @@ class Placer:
 # ---------------------------------------------------------------------------
 # The board
 
+class Template:
+    """A board to place into, such as templates/Eurocard 3U.kicad_pcb. Its Edge.Cuts outline sets the size, and
+    the footprints on it (the backplane connector, mounting holes) stay where they are, with chips kept clear.
+    A template footprint whose reference is also in the design (the connector, once a card's netlist has one)
+    takes that part's nets, and its pads pull the chips they connect to."""
+
+    def __init__(self, path):
+        root, extension = os.path.splitext(os.path.abspath(path))
+        self.path = root + '.kicad_pcb' if extension == '.kicad_pro' else root + extension  # a project's board
+        board = pcbnew.LoadBoard(self.path) if os.path.isfile(self.path) else None
+        if board is None:
+            raise SystemExit("can't load the template board %s" % self.path)
+        box = board.GetBoardEdgesBoundingBox()
+        if box.GetWidth() == 0:
+            raise SystemExit('%s has no Edge.Cuts outline' % path)
+        self.origin = (pcbnew.ToMM(box.GetX()), pcbnew.ToMM(box.GetY()))
+        self.size = (pcbnew.ToMM(box.GetWidth()), pcbnew.ToMM(box.GetHeight()))
+        ox, oy = self.origin
+        self.keepouts, self.pads, self.references, self.fpids = [], {}, set(), {}
+        for footprint in board.GetFootprints():
+            self.fpids[footprint.GetReference()] = footprint.GetFPIDAsString()
+            body = footprint.GetBoundingBox(False)
+            self.keepouts.append((pcbnew.ToMM(body.GetLeft()) - ox, pcbnew.ToMM(body.GetTop()) - oy,
+                                  pcbnew.ToMM(body.GetRight()) - ox, pcbnew.ToMM(body.GetBottom()) - oy))
+            reference = footprint.GetReference()
+            self.references.add(reference)
+            for pad in footprint.Pads():
+                at = pad.GetPosition()
+                self.pads[(reference, pad.GetNumber())] = (pcbnew.ToMM(at.x) - ox, pcbnew.ToMM(at.y) - oy)
+
+    def match(self, design):
+        """{design reference: template reference} for the design's parts already on the template, like the
+        backplane connector: the same reference, or else the same footprint (by library name, then by name)."""
+        alias = {ref: ref for ref in design.parts if ref in self.references}
+        for ref, (_, fpid, _) in sorted(design.parts.items()):
+            if ref in alias or design.kind(ref) != 'header':
+                continue
+            free = [t for t in sorted(self.fpids) if t not in alias.values()]
+            found = [t for t in free if self.fpids[t] == fpid] or \
+                [t for t in free if self.fpids[t].split(':')[-1] == fpid.split(':')[-1]]
+            if found:
+                alias[ref] = found[0]
+        return alias
+
+    def clear(self, x0, y0, x1, y1, margin=2.0):
+        """True if the rectangle stays margin mm from every template footprint."""
+        return all(x1 + margin <= k[0] or x0 >= k[2] + margin or y1 + margin <= k[1] or y0 >= k[3] + margin
+                   for k in self.keepouts)
+
+
 class Board:
-    def __init__(self, design, width, height):
+    def __init__(self, design, width, height, template=None, alias=None):
         self.design = design
-        self.board = pcbnew.BOARD()
+        self.origin = template.origin if template else (0, 0)
+        self.board = pcbnew.LoadBoard(template.path) if template else pcbnew.BOARD()
         self.board.SetCopperLayerCount(4)
         self.netcodes = {}
         for name in design.nets:
@@ -183,7 +246,21 @@ class Board:
             self.netcodes[name] = item
         self.pad_net = {(ref, pad): name for name, pins in design.nets.items() for ref, pad in pins}
         self.width, self.height = width, height
-        self.outline()
+        if template:
+            design_ref = {t: d for d, t in (alias or {}).items()}
+            for footprint in self.board.GetFootprints():
+                ref = design_ref.get(footprint.GetReference())
+                if ref is None:
+                    continue
+                # It becomes the schematic's part, so DRC's schematic parity sees one connector, not two.
+                footprint.SetReference(ref)
+                footprint.SetPath(pcbnew.KIID_PATH(design.parts[ref][2]))
+                for pad in footprint.Pads():
+                    net = self.pad_net.get((ref, pad.GetNumber()))
+                    if net:
+                        pad.SetNet(self.netcodes[net])
+        else:
+            self.outline()
 
     def outline(self):
         corners = [(0, 0), (self.width, 0), (self.width, self.height), (0, self.height)]
@@ -206,7 +283,8 @@ class Board:
         footprint.SetPath(pcbnew.KIID_PATH(path))
         footprint.SetOrientationDegrees(angle)
         _, _, shift = pad_offsets(footprint, angle)
-        footprint.SetPosition(pcbnew.VECTOR2I(mm(centre[0] + shift[0]), mm(centre[1] + shift[1])))
+        x, y = centre[0] + shift[0] + self.origin[0], centre[1] + shift[1] + self.origin[1]
+        footprint.SetPosition(pcbnew.VECTOR2I(mm(x), mm(y)))
         for pad in footprint.Pads():
             net = self.pad_net.get((reference, pad.GetNumber()))
             if net:
@@ -226,7 +304,7 @@ class Board:
             outline = zone.Outline()
             outline.NewOutline()
             for x, y in ((0, 0), (self.width, 0), (self.width, self.height), (0, self.height)):
-                outline.Append(mm(x), mm(y))
+                outline.Append(mm(x + self.origin[0]), mm(y + self.origin[1]))
             outline.Outline(0).SetClosed(True)
             self.board.Add(zone)
 
@@ -237,43 +315,119 @@ class Board:
 
 # ---------------------------------------------------------------------------
 
-def place_project(directory, pitch=None, density=1.4, runs=6, moves=None, seed=1, cli=None, candidates=5):
+def slot_size(size, gap):
+    """A chip's slot: its body plus the gap (room for its cap and a routing channel), rounded up to 0.5 mm."""
+    return tuple(math.ceil((size[i] + gap[i]) * 2) / 2 for i in (0, 1))
+
+
+def pack(slots, left, top, right, bottom, clear=None):
+    """Shelf-packs slot sizes into the rectangle, tallest first, left to right in rows. Returns
+    [(size, centre)], or None if they don't all fit. clear(x0, y0, x1, y1) rules out spots, like a template's."""
+    placed, x, y, row = [], left, top, 0
+    for w, h in sorted(slots, key=lambda s: (-s[1], -s[0])):
+        while True:
+            if row == 0:
+                row = h
+            if y + h > bottom:
+                return None
+            spot = x
+            while spot + w <= right and clear and not clear(spot, y, spot + w, y + h):
+                spot += 1
+            if spot + w <= right:
+                placed.append(((w, h), (spot + w / 2, y + row / 2)))
+                x = spot + w
+                break
+            x, y, row = left, y + row, 0  # the next row
+    return placed
+
+
+def inventory(chips, slot_of, density):
+    """How many slots of each size: each size's chips and density - 1 spares (at least one)."""
+    counts = {}
+    for chip in chips:
+        counts[slot_of[chip]] = counts.get(slot_of[chip], 0) + 1
+    return {size: n + max(1, math.ceil(n * (density - 1))) if density > 1 else n for size, n in counts.items()}
+
+
+def place_project(directory, gap=(7.0, 4.0), density=1.4, runs=6, moves=None, seed=1, cli=None, candidates=5,
+                  template=None):
     """Writes Candidates/1..N.kicad_pcb and <project>.kicad_pcb (a copy of the best); returns that path."""
     name = os.path.basename(os.path.normpath(directory))
     netlist = os.path.join(directory, name + '.net')
     subprocess.run([cli or kicad_cli(), 'sch', 'export', 'netlist', '--format', 'kicadsexpr', '-o', netlist,
                     os.path.join(directory, name + '.kicad_sch')], check=True, capture_output=True)
     design = Design(netlist, find_kicad('share/kicad/footprints'))
-    kinds = {kind: sorted((r for r in design.parts if design.kind(r) == kind), key=reference_order)
+    template = Template(template) if template else None
+    alias = template.match(design) if template else {}
+    on_template = set(alias)
+    for ref, t in sorted(alias.items()):
+        print('  %s is the template\'s %s' % (ref, t) if ref != t else '  %s is on the template' % ref)
+    kinds = {kind: sorted((r for r in design.parts if design.kind(r) == kind and r not in on_template),
+                          key=reference_order)
              for kind in ('chip', 'decoupling', 'bulk', 'header')}
     chips = kinds['chip']
+    if template and kinds['header']:
+        print('  warning: %s matched nothing on the template, so it goes in the strip along the bottom edge'
+              % ', '.join(kinds['header']))
 
     offsets, sizes = {}, {}
     for reference in design.parts:
         angle = 90 if design.kind(reference) == 'header' else CHIP_ANGLE
         offsets[reference], sizes[reference], _ = pad_offsets(design.load(reference), angle)
-    biggest = (max(sizes[c][0] for c in chips), max(sizes[c][1] for c in chips))
-    pitch = pitch or (round(biggest[0] + 10, 1), round(biggest[1] + 10, 1))  # room for the cap and a channel
-    if biggest[0] > pitch[0] or biggest[1] > pitch[1]:
-        raise SystemExit('a %.1f x %.1f mm chip does not fit a %g x %g slot' % (biggest + tuple(pitch)))
-    count = math.ceil(len(chips) * density)
-    cols = max(1, round(math.sqrt(count * pitch[1] / pitch[0] * 1.6)))
-    rows = math.ceil(count / cols)
+    # The inventory: each chip's slot size, from its own footprint.
+    slot_of = {chip: slot_size(sizes[chip], gap) for chip in chips}
+    header_height = max((sizes[h][1] for h in kinds['header'] + kinds['bulk']), default=0)
+    strip = header_height + EDGE  # the header and bulk cap row along the bottom edge
+    if template:
+        # The board is fixed: the most spares that still pack, from density 2 down to none.
+        width, height = template.size
+        clear = lambda x0, y0, x1, y1: template.clear(x0, y0, x1, y1, margin=1.0)
+        for step in range(21):
+            used = round(2.0 - step * 0.05, 2)
+            counts = inventory(chips, slot_of, used)
+            packed = pack([s for s, n in counts.items() for _ in range(n)], EDGE, EDGE, width - EDGE,
+                          height - strip, clear)
+            if packed:
+                break
+        else:
+            need = sum(w * h for w, h in slot_of.values())
+            raise SystemExit('%d chips need %.0f cm2 of slots and do not pack onto the %g x %g mm template (%.0f cm2 '
+                             'inside the edges); try a smaller --gap or a bigger board'
+                             % (len(chips), need / 100, width, height,
+                                (width - 2 * EDGE) * (height - EDGE - strip) / 100))
+        print('  %d spare slots (density %.2f)' % (len(packed) - len(chips), used))
+    else:
+        counts = inventory(chips, slot_of, density)
+        slots = [s for s, n in counts.items() for _ in range(n)]
+        area = sum(w * h for w, h in slots)
+        inner = max(math.sqrt(area * 1.6) * 1.1, max(w for w, _ in slots),
+                    sum(sizes[h][0] + 5 for h in kinds['header'] + kinds['bulk']))
+        packed = pack(slots, EDGE, EDGE, EDGE + inner, float('inf'))
+        width = 2 * EDGE + inner
+        height = max(y + h / 2 for (_, h), (_, y) in packed) + EDGE + strip
+    centres = [centre for _, centre in packed]
+    slot_classes = [size for size, _ in packed]
 
-    # Headers in a row along the bottom edge, then the bulk cap after them.
-    header_height = max((sizes[h][1] for h in kinds['header']), default=0)
-    width = max(2 * EDGE + cols * pitch[0], 2 * EDGE + sum(sizes[h][0] + 5 for h in kinds['header']) + 10)
-    height = 2 * EDGE + rows * pitch[1] + (header_height + EDGE if kinds['header'] else 0)
-    fixed_at, x = {}, EDGE
-    for header in kinds['header']:
-        fixed_at[header] = (x + sizes[header][0] / 2, height - EDGE - header_height / 2)
-        x += sizes[header][0] + 5
-    for cap in kinds['bulk']:
-        fixed_at[cap] = (x + sizes[cap][0] / 2, height - EDGE - header_height / 2)
-    fixed = {(ref, pad): (cx + dx, cy + dy) for ref, (cx, cy) in fixed_at.items() for pad, (dx, dy) in offsets[ref].items()}
+    # Headers in a row along the bottom edge, then the bulk cap after them, stepping past template footprints.
+    fixed_at, x, y = {}, EDGE, height - EDGE - header_height / 2
+
+    def clear_from(x, w):
+        while template and not template.clear(x, y - header_height / 2, x + w, y + header_height / 2):
+            x += 1
+        return x
+
+    for part in kinds['header'] + kinds['bulk']:
+        x = clear_from(x, sizes[part][0])
+        fixed_at[part] = (x + sizes[part][0] / 2, y)
+        x += sizes[part][0] + 5
+    if template and x - 5 > width - EDGE:
+        print('  warning: the headers and bulk cap run %.0f mm past the board edge' % (x - 5 - (width - EDGE)))
+    fixed ={(ref, pad): (cx + dx, cy + dy) for ref, (cx, cy) in fixed_at.items() for pad, (dx, dy) in offsets[ref].items()}
+    if template:
+        fixed.update({(ref, pad): at for ref, t in alias.items() for (r, pad), at in template.pads.items() if r == t})
 
     signal_nets = [pins for net, pins in design.nets.items() if net.lstrip('/') not in POWER]
-    placer = Placer(chips, offsets, signal_nets, fixed, cols, rows, pitch, (EDGE, EDGE))
+    placer = Placer(chips, offsets, signal_nets, fixed, centres, [slot_of[c] for c in chips], slot_classes)
     moves = moves or 4000 * len(chips)
     rng = random.Random(seed)
     results = []
@@ -283,11 +437,13 @@ def place_project(directory, pitch=None, density=1.4, runs=6, moves=None, seed=1
         print('  anneal %d: wirelength %.0f mm' % (run + 1, cost))
     random_cost = sum(placer.anneal(random.Random(seed + run), 0)[0] for run in range(5)) / 5
     results.sort()
-    print('%s: %d chips in %d x %d slots of %g x %g mm; best %.0f mm, random %.0f mm'
-          % (name, len(chips), cols, rows, pitch[0], pitch[1], results[0][0], random_cost))
+    print('%s: %d chips in %d slots (%s); best %.0f mm, random %.0f mm'
+          % (name, len(chips), len(centres), ', '.join('%d of %g x %g' % (slot_classes.count(s), s[0], s[1])
+                                                       for s in sorted(set(slot_classes))),
+             results[0][0], random_cost))
 
     def write(slots, path):
-        write_board(design, kinds, sizes, offsets, placer, fixed_at, slots, width, height, path)
+        write_board(design, kinds, sizes, offsets, placer, fixed_at, slots, width, height, path, template, alias)
         print('  -> %s (%.0f x %.0f mm)' % (path, width, height))
 
     # The best few placements become candidates for route.py, which routes each and keeps the best.
@@ -302,9 +458,10 @@ def place_project(directory, pitch=None, density=1.4, runs=6, moves=None, seed=1
     return path
 
 
-def write_board(design, kinds, sizes, offsets, placer, fixed_at, best, width, height, path):
+def write_board(design, kinds, sizes, offsets, placer, fixed_at, best, width, height, path, template=None,
+                alias=None):
     chips = kinds['chip']
-    board = Board(design, width, height)
+    board = Board(design, width, height, template, alias)
     vcc = {}  # chip -> its VCC pad, in mm
     for chip, slot in zip(chips, best):
         centre = placer.centre(slot)
@@ -337,17 +494,20 @@ def reference_order(reference):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('project', help='a project directory from kicad.py, e.g. "Build/KiCad/Register 16"')
-    parser.add_argument('--pitch', help='slot size in mm, WxH (default: the biggest chip plus 10 mm each way)')
+    parser.add_argument('--gap', default='7x4', help="mm added to each chip's own size for its slot, WxH: room "
+                        'for its cap and a routing channel (default 7x4)')
     parser.add_argument('--density', type=float, default=1.4, help='slots per chip (default 1.4)')
     parser.add_argument('--runs', type=int, default=6, help='independent anneals (default 6)')
     parser.add_argument('--candidates', type=int, default=5, help='best placements kept for routing (default 5)')
     parser.add_argument('--moves', type=int, help='moves per anneal (default 4000 per chip)')
     parser.add_argument('--seed', type=int, default=1)
+    parser.add_argument('--template', help='a board to place into, such as "Tools/eda/templates/Eurocard 3U.kicad_pcb". '
+                        'Its outline and footprints stay; --density is ignored')
     parser.add_argument('--kicad-cli', help="exports the schematic's netlist (default: KiCad's own)")
     args = parser.parse_args()
-    pitch = tuple(float(v) for v in args.pitch.lower().split('x')) if args.pitch else None
-    place_project(args.project, pitch, args.density, args.runs, args.moves, args.seed, args.kicad_cli,
-                  args.candidates)
+    gap = tuple(float(v) for v in args.gap.lower().split('x'))
+    place_project(args.project, gap, args.density, args.runs, args.moves, args.seed, args.kicad_cli,
+                  args.candidates, args.template)
 
 
 if __name__ == '__main__':

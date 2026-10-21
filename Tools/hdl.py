@@ -24,6 +24,11 @@ Parts:
     drive(bus, oe_not)             a Bus Driver 8 / 16 part: returns its Y
     mux_bus(s, a, b)               s ? b : a for a whole bus, through Mux 2x4 parts
 
+Cards:
+    with card('ALU'):      parts and gates made inside go on that card (the YAML node gets card: ALU).
+        alu = Part('ALU 16')   Untagged nodes go on the card of the part that contains them, so tagging
+                               the top-level blocks covers the design. Tools/eda/cards.py splits the nets.
+
 Layout is automatic: when the component is saved, inputs go on the left, outputs on the right, and every
 other node one column past the deepest node feeding it. Feedback from state (flip-flops, RAM and parts
 that contain them) into the logic computing the next state doesn't count, so that logic sits to the left
@@ -37,7 +42,7 @@ from circuit import Builder, COMPONENTS
 
 __all__ = ['Signal', 'Bus', 'bus', 'Part', 'primitive', 'flip_flop', 'clock_source', 'tristate', 'rom', 'ram',
            'gate', 'nand', 'nor', 'mux', 'any_of', 'low', 'high', 'drive', 'mux_bus',
-           'component', 'inputs', 'bus_input', 'output']
+           'component', 'inputs', 'bus_input', 'output', 'card']
 
 _circuit = None  # the component being described
 
@@ -253,10 +258,11 @@ class _Circuit:
     def __init__(self, name, description):
         self.name, self.description = name, description
         self.nodes, self.wires, self.constants = [], [], {}
+        self.card = None  # the card new nodes go on, set by card()
 
     def add(self, emit, stateful=False, column=None, kind=None):
         """emit(builder, column) adds the node to a Builder (at save time) and returns its id."""
-        self.nodes.append({'emit': emit, 'stateful': stateful, 'column': column, 'kind': kind})
+        self.nodes.append({'emit': emit, 'stateful': stateful, 'column': column, 'kind': kind, 'card': self.card})
         return len(self.nodes)
 
     def wire(self, source, target):
@@ -305,8 +311,15 @@ class _Circuit:
         builder = Builder(self.name, self.description)
         columns = self.columns()
         for i, node in enumerate(self.nodes, 1):
+            first = len(builder.nodes)  # the node's first line: all of it in flow style, or a block's id line
             emitted = node['emit'](builder, columns[i])
             assert int(str(emitted).split('.')[0]) == i
+            if node['card']:
+                tag = 'card: "%s"' % node['card']
+                if builder.nodes[first].startswith('  - {'):
+                    builder.nodes[first] = builder.nodes[first].replace(', ', ', %s, ' % tag, 1)
+                else:
+                    builder.nodes.insert(first + 1, '    ' + tag)
         builder.wires = ['%s -> %s' % wire for wire in self.wires]
         builder.save()
 
@@ -321,6 +334,18 @@ def component(name, description):
         _circuit.save()
     finally:
         _circuit = None
+
+
+@contextmanager
+def card(name):
+    """Put the nodes made inside the with block on this card. Blocks don't nest."""
+    if _circuit.card is not None:
+        raise ValueError('card %s inside card %s' % (name, _circuit.card))
+    _circuit.card = name
+    try:
+        yield
+    finally:
+        _circuit.card = None
 
 
 def inputs(*names):
