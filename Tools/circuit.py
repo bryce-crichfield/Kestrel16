@@ -41,9 +41,11 @@ class Builder:
     def gate(self, kind, column):
         return self._add('kind: %s' % kind, column, 120)
 
-    def part(self, component, column, pins):
-        """A component instance; pins is its larger pin count, for spacing."""
-        return self._add('component: %s' % component, column, 70 + 22 * pins)
+    def part(self, component, column, pins, name=None):
+        """A component instance; pins is its larger pin count, for spacing. name says what this instance is for
+        (\"IR\", \"R3\"), and becomes its schematic sheet's name and its chips' silkscreen."""
+        return self._add('component: %s%s' % (component, ', name: "%s"' % name if name else ''), column,
+                         70 + 22 * pins)
 
     def wire(self, source, target):
         self.wires.append('%s -> %s' % (source, target))

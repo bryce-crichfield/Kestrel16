@@ -19,7 +19,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, '..', '..'))
 COMPONENTS = os.path.join(ROOT, 'Build', 'Components')
 SETTINGS = os.path.join(ROOT, 'Build', 'eda_gui.json')
-TEMPLATE = os.path.join(HERE, 'templates', 'Eurocard 3U.kicad_pcb')
+TEMPLATE = os.path.join(HERE, 'templates', '6U_Eurocard', '6U_Eurocard.kicad_pcb')
 
 
 def kicad_python():
@@ -39,16 +39,24 @@ STAGES = [
     ('Eurocard template', 'template.py', 'kicad', None, []),
     ('Place', 'place.py', 'kicad', 'project', [
         ('--template', 'Template board (blank: size to fit)', 'file', TEMPLATE),
-        ('--gap', 'Slot room past each chip WxH mm', str, '7x4'),
+        ('--gap', 'Slot room past each chip, along x across, mm', str, '7x4'),
         ('--density', 'Slots per chip (no template)', str, ''),
+        ('--packing', 'Packing: auto, rows or free', str, 'auto'),
+        ('--vertical', 'Chips stand up (rows become columns)', bool, False),
+        ('--label', "Card label (blank: project name; none: no label)", str, ''),
+        ('--label-corner', 'Label corner: auto, top-left, top-right, bottom-left, bottom-right', str, 'auto'),
+        ('--label-angle', 'Label rotation, degrees', str, '0'),
+        ('--label-size', 'Label text height, mm', str, '3'),
+        ('--back-labels', 'Chip labels on the back too', bool, False),
         ('--runs', 'Anneals', int, 6),
         ('--candidates', 'Placements kept for routing', int, 5),
         ('--moves', 'Moves per anneal (blank: 4000 per chip)', str, ''),
         ('--seed', 'Seed', int, 1)]),
     ('Route', 'route.py', 'kicad', 'project', [
-        ('--passes', 'Routing passes per candidate', int, 100),
+        ('--candidates', 'Candidates to route, best first', int, 1),
+        ('--passes', 'Routing passes per candidate', int, 25),
         ('--threads', 'Freerouting threads', int, 4),
-        ('--timeout', 'Seconds per candidate', int, 1200),
+        ('--timeout', 'Seconds per candidate', int, 600),
         ('--java', 'Java 21+ (blank: find it)', 'file', '')]),
 ]
 GENERATORS = ['make_registers.py', 'make_alu.py', 'make_cpu.py']  # in order: later ones use earlier parts
@@ -217,6 +225,7 @@ class App:
         try:
             self.process = subprocess.Popen(line, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                             text=True, bufsize=1, encoding='utf-8', errors='replace',
+                                            env=dict(os.environ, PYTHONUNBUFFERED='1'),  # lines as they're printed
                                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         except OSError as error:
             self.write('%s\n' % error)
@@ -255,7 +264,11 @@ class App:
     def stop(self):
         self.queue = []
         if self.process:
-            self.process.kill()
+            if os.name == 'nt':  # the whole tree, so route.py's Freerouting doesn't run on
+                subprocess.run(['taskkill', '/T', '/F', '/PID', str(self.process.pid)], capture_output=True,
+                               creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            else:
+                self.process.kill()
             self.write('stopped\n')
 
     def open_folder(self):

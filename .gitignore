@@ -1,3 +1,6 @@
 Binary/
 Build/
 __pycache__/
+*-backups/
+fp-info-cache
+*.kicad_prl

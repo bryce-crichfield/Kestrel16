@@ -20,6 +20,8 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
+import time
 
 import pcbnew
 
@@ -147,8 +149,12 @@ def score(board):
     return unrouted, vias, round(length)
 
 
+PASS = re.compile(r'pass #(\d+) .*?\((\d+) unrouted\)')  # Freerouting's line for a finished pass
+
+
 def route(placed, folder, java, jar, passes, threads, timeout):
-    """Routes one placed board into folder; returns (score, routed board path)."""
+    """Routes one placed board into folder; returns (score, routed board path), or (None, None) if Freerouting
+    stopped without a session."""
     stem = os.path.join(folder, os.path.splitext(os.path.basename(placed))[0])
     dsn, ses, routed = stem + '.dsn', stem + '.ses', stem + '.kicad_pcb'
     board = pcbnew.LoadBoard(placed)
@@ -162,13 +168,27 @@ def route(placed, folder, java, jar, passes, threads, timeout):
         os.remove(ses)
     command = [java, '-jar', jar, '-de', os.path.abspath(dsn), '-do', os.path.abspath(ses), '-mp', str(passes),
                '-mt', str(threads), '--gui.enabled=false']
+    # Freerouting's log goes to <candidate>.log, and each finished pass is reported as it comes, so a long route
+    # shows how it's going. It writes the session only when it stops by itself, so the timeout loses the candidate.
+    start, timer = time.time(), None
     with open(stem + '.log', 'w', encoding='utf-8') as log:
-        try:
-            subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            print('  %s: Freerouting ran past %d s and was stopped' % (os.path.basename(placed), timeout))
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                   encoding='utf-8', errors='replace')
+        timer = threading.Timer(timeout, process.kill)
+        timer.start()
+        for line in process.stdout:
+            log.write(line)
+            found = PASS.search(line)
+            if found:
+                print('    pass %s: %s unrouted (%.0f s)' % (found.group(1), found.group(2), time.time() - start),
+                      flush=True)
+        process.wait()
+        timer.cancel()
     if not os.path.exists(ses):
-        raise SystemExit('Freerouting wrote no session for %s; see %s.log' % (placed, stem))
+        print('  %s: Freerouting %s, so it wrote no session; see %s.log'
+              % (os.path.basename(placed), 'ran past %d s and was stopped' % timeout
+                 if time.time() - start >= timeout else 'failed', stem), flush=True)
+        return None, None
     import_ses(board, ses)
     prune(board)
     board.Save(routed)
@@ -211,23 +231,29 @@ def fabricate(directory, name, cli):
 
 # ---------------------------------------------------------------------------
 
-def route_project(directory, java=None, jar=None, passes=100, threads=4, timeout=1200, cli=None):
-    """Routes every candidate, keeps the best as <project>.kicad_pcb, checks it and writes Fabrication/. Returns
-    True when the board is fully routed and DRC finds no errors."""
+def route_project(directory, java=None, jar=None, passes=25, threads=4, timeout=600, cli=None, candidates=1):
+    """Routes the first few candidates (place.py writes them best first), keeps the best as <project>.kicad_pcb,
+    checks it and writes Fabrication/. Returns True when the board is fully routed and DRC finds no errors."""
     start_pcbnew()
     cli = cli or kicad_cli()
     name = os.path.basename(os.path.normpath(directory))
     placed = sorted(glob.glob(os.path.join(directory, 'Candidates', '*.kicad_pcb')),
                     key=lambda path: int(re.sub(r'\D', '', os.path.basename(path)) or 0))
-    placed = placed or [os.path.join(directory, name + '.kicad_pcb')]
+    placed = (placed or [os.path.join(directory, name + '.kicad_pcb')])[:candidates]
     java, jar = find_java(java), find_freerouting(jar)
     folder = os.path.join(directory, 'Routing')
     os.makedirs(folder, exist_ok=True)
     results = []
-    for path in placed:
+    for k, path in enumerate(placed):
+        print('  routing %s (%d of %d)' % (os.path.basename(path), k + 1, len(placed)), flush=True)
         result, routed = route(path, folder, java, jar, passes, threads, timeout)
+        if result is None:
+            continue
         results.append((result, routed))
-        print('  %s: %d unrouted, %d vias, %d mm of track' % ((os.path.basename(path),) + result))
+        print('  %s: %d unrouted, %d vias, %d mm of track' % ((os.path.basename(path),) + result), flush=True)
+    if not results:
+        print('%s: no candidate was routed' % name)
+        return False
     (unrouted, vias, length), best = min(results)
     pcb = os.path.join(directory, name + '.kicad_pcb')
     shutil.copyfile(best, pcb)
@@ -246,13 +272,17 @@ def main():
     parser.add_argument('project', help='a placed project directory, e.g. "Build/KiCad/Register 16"')
     parser.add_argument('--java', help="a Java 21+ executable (default: JAVA_HOME, PATH, then Coursier's cache)")
     parser.add_argument('--freerouting', help="freerouting.jar (default: KiCad's Freerouting plugin)")
-    parser.add_argument('--passes', type=int, default=100, help='most routing passes per candidate (default 100)')
+    parser.add_argument('--passes', type=int, default=25, help='most routing passes per candidate; Freerouting '
+                        'stops sooner once everything is routed (default 25)')
     parser.add_argument('--threads', type=int, default=4, help='Freerouting optimizer threads (default 4)')
-    parser.add_argument('--timeout', type=int, default=1200, help='seconds per candidate (default 1200)')
+    parser.add_argument('--timeout', type=int, default=600, help='seconds per candidate; one stopped by it is '
+                        'lost, since Freerouting writes nothing until it finishes (default 600)')
+    parser.add_argument('--candidates', type=int, default=1, help="how many of place.py's candidates to route, "
+                        'best first (default 1)')
     parser.add_argument('--kicad-cli', help="for DRC and the fabrication files (default: KiCad's own)")
     args = parser.parse_args()
     ok = route_project(args.project, args.java, args.freerouting, args.passes, args.threads, args.timeout,
-                       args.kicad_cli)
+                       args.kicad_cli, args.candidates)
     sys.exit(0 if ok else 1)
 
 

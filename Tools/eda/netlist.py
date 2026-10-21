@@ -29,6 +29,7 @@ class Node:
         self.kind = entry.get('kind', 'Component')
         self.component = entry.get('component')  # the child's name, for a Component node
         self.label = entry.get('label', '')
+        self.name = entry.get('name', '')  # what a Component instance is for, from hdl's Part(..., name=)
         self.width = entry.get('width', 1)
         self.entry = entry
         if self.kind == 'Input':

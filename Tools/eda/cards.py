@@ -1,6 +1,6 @@
 """Splits a design into cards and reports the nets that cross between them.
 
-    python Tools/eda/cards.py ["Kestrel16 Computer"] [--reserved 16] [--show 20]
+    python Tools/eda/cards.py ["Kestrel16 Computer"] [--reserved 32] [--show 20]
 
 Cards come from the card: key that hdl.card() writes on nodes. A node without one goes on the card of the part
 that contains it, so tagging top-level blocks is enough; the innermost tag wins. The design is flattened to its
@@ -24,7 +24,7 @@ import yaml
 from netlist import COMPONENTS, Library, bits
 
 BUILD = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'Build', 'Cards')
-PINS = 96
+PINS = 192  # two 96-pin DIN 41612 connectors, P1 and P2 as on VME
 CONSTANTS = ('Low', 'High')
 # Primitives whose outputs can share a net with another driver.
 TRISTATE = ('TriState', 'RAM', 'Terminal')
@@ -254,7 +254,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('design', nargs='?', default='Kestrel16 Computer')
     parser.add_argument('--components', default=None, help='where the netlists are (default Build/Components/)')
-    parser.add_argument('--reserved', type=int, default=16, help='connector pins kept for VCC and GND')
+    parser.add_argument('--reserved', type=int, default=32, help='connector pins kept for VCC and GND')
     parser.add_argument('--show', type=int, default=15, help='how many of the widest-reaching nets to list')
     args = parser.parse_args()
     design = Design(args.design, Library(args.components) if args.components else Library())

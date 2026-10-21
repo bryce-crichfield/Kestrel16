@@ -14,15 +14,19 @@ Wiring:
 Logic:
     a & b, a | b, a ^ b, ~a, nand(a, b), nor(a, b)
     mux(s, a, b)           s ? b : a, from gates (pass s_not to share one Not between muxes)
-    any_of(signals)        an Or tree
+    any_of(signals)        an Or tree; all_of(signals) an And tree
     low(), high()          the component's constant 0 and 1 (one node each, shared)
 
 Parts:
     part = Part('Register 16')     a saved component; its ports come from Build/Components/Register 16.yaml
+    Part('Register 16', name='R3') names the instance: its sheet's name and its chips' silkscreen label
     part.D, part['/LOAD']          a bus port is a Bus, a one-bit port a Signal; unknown names are errors
     flip_flop(clock), tristate(a, oe_not), rom(...), ram(...), clock_source(), primitive(kind)
-    drive(bus, oe_not)             a Bus Driver 8 / 16 part: returns its Y
-    mux_bus(s, a, b)               s ? b : a for a whole bus, through Mux 2x4 parts
+    drive(bus, oe_not, name)       a Bus Driver 8 / 16 part: returns its Y
+    mux_bus(s, a, b, name)         s ? b : a for a whole bus, through Mux 2x4 parts
+    mux4_bus(s, [a, b, c, d])      a 4-way pick by a 2-bit s, through Mux 4x2 parts
+    nonzero(bits), equals(bits, n) wide tests through Compare 8 (74HC688) parts; differs() gives each /EQ
+    any_and(pairs)                 an OR of up to eight ANDs, through NANDs and a Nand 8 (74HC30)
 
 Cards:
     with card('ALU'):      parts and gates made inside go on that card (the YAML node gets card: ALU).
@@ -41,7 +45,8 @@ from contextlib import contextmanager
 from circuit import Builder, COMPONENTS
 
 __all__ = ['Signal', 'Bus', 'bus', 'Part', 'primitive', 'flip_flop', 'clock_source', 'tristate', 'rom', 'ram',
-           'gate', 'nand', 'nor', 'mux', 'any_of', 'low', 'high', 'drive', 'mux_bus',
+           'gate', 'nand', 'nor', 'mux', 'any_of', 'all_of', 'differs', 'nonzero', 'equals', 'any_and', 'mux4_bus', 'low', 'high',
+           'drive', 'mux_bus',
            'component', 'inputs', 'bus_input', 'output', 'card']
 
 _circuit = None  # the component being described
@@ -138,10 +143,12 @@ def _component_file(name):
     return _parts[name]
 
 
-def Part(name, column=None):
-    """An instance of a saved component."""
-    inputs, outputs, stateful = _component_file(name)
-    node_id = _circuit.add(lambda b, x: b.part(name, x, max(len(inputs), len(outputs))), stateful, column)
+def Part(component, column=None, name=None):
+    """An instance of a saved component. name says what this one is for, like 'IR' or 'R3': it names its sheet in
+    the schematic and labels its chips on the board."""
+    inputs, outputs, stateful = _component_file(component)
+    node_id = _circuit.add(lambda b, x: b.part(component, x, max(len(inputs), len(outputs)), name), stateful,
+                           column)
     return Node(node_id, inputs + outputs)
 
 
@@ -218,6 +225,14 @@ def any_of(signals):
     return terms[0]
 
 
+def all_of(signals):
+    """1 if all of signals are 1: a tree of And gates."""
+    terms = list(signals)
+    while len(terms) > 1:
+        terms = [terms[i] & terms[i + 1] if i + 1 < len(terms) else terms[i] for i in range(0, len(terms), 2)]
+    return terms[0]
+
+
 def _constant(kind):
     if kind not in _circuit.constants:
         _circuit.constants[kind] = Signal(_circuit.add(lambda b, x: b.gate(kind, x)))
@@ -228,21 +243,70 @@ def low(): return _constant('Low')
 def high(): return _constant('High')
 
 
-def drive(source, output_enable_not):
-    """source onto a bus while output_enable_not is 0, through a Bus Driver 8 or 16. Returns its Y."""
-    driver = Part('Bus Driver %d' % len(source))
+def drive(source, output_enable_not, name=None):
+    """source onto a bus while output_enable_not is 0, through a Bus Driver 8 or 16 (named name). Returns its Y."""
+    driver = Part('Bus Driver %d' % len(source), name=name)
     bus(source) >> driver.A
     output_enable_not >> driver['/OE']
     return driver.Y
 
 
-def mux_bus(select, if0, if1):
-    """select ? if1 : if0 for a whole bus, four bits per Mux 2x4. The shorter side is padded with 0s."""
+def mux4_bus(select, choices):
+    """choices[select] for a whole bus (select a 2-bit Bus, choices four equal-width buses), two bits per Mux
+    4x2 (74HC153)."""
+    width = len(choices[0])
+    choices = [bus(choice, [low()] * (width % 2)) for choice in choices]
+    result = Bus()
+    for start in range(0, width, 2):
+        chip = Part('Mux 4x2')
+        bus(choice[start] for choice in choices) >> chip.A
+        bus(choice[start + 1] for choice in choices) >> chip.B
+        bus(select) >> chip.S
+        result += [chip.YA, chip.YB]
+    return result[:width]
+
+
+def differs(bits, value, enable_not=None):
+    """/EQ of each Compare 8 (74HC688) checking bits against the constant value, eight bits per chip:
+    each is 0 when its bits match (and enable_not is 0)."""
+    bits = bus(bits)
+    bits = bus(bits, [low()] * (-len(bits) % 8))
+    result = []
+    for start in range(0, len(bits), 8):
+        chip = Part('Compare 8')
+        bits[start:start + 8] >> chip.P
+        bus([high() if value >> i & 1 else low() for i in range(start, start + 8)]) >> chip.Q
+        (low() if enable_not is None else enable_not) >> chip['/G']
+        result.append(chip['/EQ'])
+    return result
+
+
+def nonzero(bits):
+    """1 if any of bits is 1: Compare 8s against 0, not an Or tree."""
+    return any_of(differs(bits, 0))
+
+
+def equals(bits, value):
+    """1 if bits hold the constant value, through Compare 8s."""
+    return ~any_of(differs(bits, value))
+
+
+def any_and(pairs):
+    """1 if a and b are both 1 for any (a, b) in pairs, up to eight: NANDs into a Nand 8 (74HC30)."""
+    terms = [nand(a, b) for a, b in pairs]
+    chip = Part('Nand 8')
+    bus(terms, [high()] * (8 - len(terms))) >> chip.A
+    return chip.Y
+
+
+def mux_bus(select, if0, if1, name=None):
+    """select ? if1 : if0 for a whole bus, four bits per Mux 2x4 (each named name). The shorter side is padded with
+    0s."""
     width = max(len(if0), len(if1))
     pad = lambda bits: bus(bits, [low()] * (-width % 4 + width - len(bits)))
     if0, if1, result = pad(if0), pad(if1), Bus()
     for start in range(0, width, 4):
-        chip = Part('Mux 2x4')
+        chip = Part('Mux 2x4', name=name)
         if0[start:start + 4] >> chip.A
         if1[start:start + 4] >> chip.B
         select >> chip.S

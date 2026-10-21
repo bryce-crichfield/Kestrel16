@@ -127,6 +127,11 @@ Terminal:                         # stands in for a UART; a header for now
     value: 74HC157
     footprint: Package_DIP:DIP-16_W7.62mm
     power: {VCC: 16, GND: 8}
+  hc153: &hc153
+    symbol: 74xx:74LS153
+    value: 74HC153
+    footprint: Package_DIP:DIP-16_W7.62mm
+    power: {VCC: 16, GND: 8}
   hc541: &hc541
     symbol: 74xx:74LS541
     value: 74HC541
@@ -137,6 +142,16 @@ Terminal:                         # stands in for a UART; a header for now
     value: 74HC169
     footprint: Package_DIP:DIP-16_W7.62mm
     power: {VCC: 16, GND: 8}
+  hc688: &hc688
+    symbol: 74xx:74LS688
+    value: 74HC688
+    footprint: Package_DIP:DIP-20_W7.62mm
+    power: {VCC: 20, GND: 10}
+  hc30: &hc30
+    symbol: 74xx:74LS30
+    value: 74HC30
+    footprint: Package_DIP:DIP-14_W7.62mm
+    power: {VCC: 14, GND: 7}
   hc377: &hc377
     symbol: 74xx:74LS377
     value: 74HC377
@@ -173,3 +188,20 @@ Counter 4:                        # synchronous load and count; /RCO chains into
     - <<: *hc169
       pins: {UP: 1, CLK: 2, D0: 3, D1: 4, D2: 5, D3: 6, /ENP: 7, /LOAD: 9, /ENT: 10,
              Q0: 14, Q1: 13, Q2: 12, Q3: 11, /RCO: 15}
+
+Compare 8:                        # /EQ low when P = Q and /G is low
+  chips:
+    - <<: *hc688
+      pins: {/G: 1, P0: 2, Q0: 3, P1: 4, Q1: 5, P2: 6, Q2: 7, P3: 8, Q3: 9,
+             P4: 11, Q4: 12, P5: 13, Q5: 14, P6: 15, Q6: 16, P7: 17, Q7: 18, /EQ: 19}
+
+Nand 8:                           # Y low when every A is high
+  chips:
+    - <<: *hc30
+      pins: {A0: 1, A1: 2, A2: 3, A3: 4, A4: 5, A5: 6, A6: 11, A7: 12, Y: 8}
+
+Mux 4x2:                          # YA = A<S>, YB = B<S>
+  chips:
+    - <<: *hc153
+      pins: {S0: 14, S1: 2, A0: 6, A1: 5, A2: 4, A3: 3, YA: 7, B0: 10, B1: 11, B2: 12, B3: 13, YB: 9}
+      tie: {GND: [1, 15]}         # both enables on

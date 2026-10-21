@@ -3,8 +3,8 @@
     python Tools/make_registers.py
 
 Chip-level parts, each exactly one 74HC chip so tools/eda/parts.yaml can place the real chip: Decoder 3to8 (a
-74HC138), Bus Driver 8 (a 74HC541) and Register 8 (a 74HC377). Built from them: Bus Driver 16, Register 16 (two
-Register 8s plus four Bus Driver 8s) and Register File (eight Register 16s: R0-R7 with two read ports and one
+74HC138), Bus Driver 8 (a 74HC541), Register 8 (a 74HC377), Compare 8 (a 74HC688) and Nand 8 (a 74HC30). Built from them: Bus Driver 16, Word Register (two
+Register 8s), Register 16 (a Word Register plus four Bus Driver 8s) and Register File (eight Register 16s: R0-R7 with two read ports and one
 write port).
 """
 from hdl import *
@@ -33,7 +33,7 @@ def make_bus_driver_16():
                                     'Driver 8s (74HC541s).'):
         A = bus_input('A', 16)
         OE = inputs('/OE')
-        output('Y', bus(drive(A[:8], OE), drive(A[8:], OE)))
+        output('Y', bus(drive(A[:8], OE, 'Low byte'), drive(A[8:], OE, 'High byte')))
 
 
 def make_register_8():
@@ -50,22 +50,49 @@ def make_register_8():
         output('Q', Q)
 
 
-def make_register():
-    with component('Register 16',
-                   '16-bit register. On the rising edge of CLK it loads D if /LOAD is 0 and keeps its value '
-                   'otherwise. Two tri-state read ports: QA drives while /OEA is 0, QB while /OEB is 0. '
-                   'Two Register 8s (74HC377s) and two Bus Driver 16s (four 74HC541s).'):
+def make_compare_8():
+    with component('Compare 8', '8-bit equality comparator, a 74HC688: /EQ is 0 when P = Q and /G is 0, '
+                                'otherwise 1. Against Q = 0 it is a zero test.'):
+        P, Q = bus_input('P', 8), bus_input('Q', 8)
+        G = inputs('/G')
+        output('/EQ', any_of([G] + [p ^ q for p, q in zip(P, Q)]))
+
+
+def make_nand_8():
+    with component('Nand 8', '8-input NAND, a 74HC30: Y is 0 when every A is 1. Fed NANDs, it is a wide OR '
+                             'of ANDs.'):
+        A = bus_input('A', 8)
+        output('Y', ~all_of(A))
+
+
+def make_word_register():
+    with component('Word Register', '16-bit register with no read ports: Q is always its value. On the rising '
+                                    'edge of CLK it loads D if /LOAD is 0. Two Register 8s (74HC377s).'):
         D = bus_input('D', 16)
-        LOAD_not, CLK, OEA, OEB = inputs('/LOAD', 'CLK', '/OEA', '/OEB')
+        LOAD_not, CLK = inputs('/LOAD', 'CLK')
         Q = Bus()
-        for half in (D[:8], D[8:]):
-            register = Part('Register 8')
+        for half, name in ((D[:8], 'Low byte'), (D[8:], 'High byte')):
+            register = Part('Register 8', name=name)
             half >> register.D
             LOAD_not >> register['/E']
             CLK >> register.CLK
             Q += register.Q
-        output('QA', drive(Q, OEA))
-        output('QB', drive(Q, OEB))
+        output('Q', Q)
+
+
+def make_register():
+    with component('Register 16',
+                   '16-bit register. On the rising edge of CLK it loads D if /LOAD is 0 and keeps its value '
+                   'otherwise. Two tri-state read ports: QA drives while /OEA is 0, QB while /OEB is 0. '
+                   'A Word Register (two 74HC377s) and two Bus Driver 16s (four 74HC541s).'):
+        D = bus_input('D', 16)
+        LOAD_not, CLK, OEA, OEB = inputs('/LOAD', 'CLK', '/OEA', '/OEB')
+        word = Part('Word Register', name='Value')
+        D >> word.D
+        LOAD_not >> word['/LOAD']
+        CLK >> word.CLK
+        output('QA', drive(word.Q, OEA, 'Port A'))
+        output('QB', drive(word.Q, OEB, 'Port B'))
 
 
 def make_register_file():
@@ -77,16 +104,17 @@ def make_register_file():
         WE, CLK = inputs('WE', 'CLK')
         RA, RB = bus_input('RA', 3), bus_input('RB', 3)
 
-        def decoder(address, enable):
-            chip = Part('Decoder 3to8')
+        def decoder(address, enable, name):
+            chip = Part('Decoder 3to8', name=name)
             address >> chip.A
             enable >> chip.E
             return chip['/Y']
 
-        write, read_a, read_b = decoder(W, WE), decoder(RA, high()), decoder(RB, high())
+        write, read_a, read_b = decoder(W, WE, 'Write select'), decoder(RA, high(), 'Read A select'), \
+            decoder(RB, high(), 'Read B select')
         QA, QB = output('QA', width=16), output('QB', width=16)
         for r in range(8):
-            register = Part('Register 16')
+            register = Part('Register 16', name='R%d' % r)
             D >> register.D
             register.QA >> QA
             register.QB >> QB
@@ -101,6 +129,9 @@ if __name__ == '__main__':
     make_bus_driver_8()
     make_bus_driver_16()
     make_register_8()
+    make_compare_8()
+    make_nand_8()
+    make_word_register()
     make_register()
     make_register_file()
-    print('wrote Decoder 3to8, Bus Driver 8 and 16, Register 8, Register 16 and Register File')
+    print('wrote Decoder 3to8, Bus Driver 8 and 16, Register 8, Compare 8, Nand 8, Word Register, Register 16 and Register File')

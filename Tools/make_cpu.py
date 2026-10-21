@@ -50,6 +50,17 @@ def make_mux():
         output('Y', [mux(S, a, b, S_not) for a, b in zip(A, B)])
 
 
+def make_mux_4x2():
+    with component('Mux 4x2', 'Two 4-input multiplexers sharing a select: YA = A<S>, YB = B<S> (S0 the low bit). '
+                              'A 74HC153 with both enables on.'):
+        A, B, S = bus_input('A', 4), bus_input('B', 4), bus_input('S', 2)
+        S0_not = ~S[0]
+        pick = lambda inputs: mux(S[1], mux(S[0], inputs[0], inputs[1], S0_not),
+                                  mux(S[0], inputs[2], inputs[3], S0_not))
+        output('YA', pick(A))
+        output('YB', pick(B))
+
+
 def make_counter_4():
     with component('Counter 4',
                    '4-bit synchronous up/down counter, a 74HC169. On the rising edge of CLK: /LOAD = 0 loads D; '
@@ -110,26 +121,25 @@ def make_program_counter():
         high() >> counter.UP
         CLK >> counter.CLK
         Q = bus([bit0.Q], counter.Q[:15])
-        output('QA', drive(Q, OEA))
-        output('QB', drive(Q, OEB))
+        output('QA', drive(Q, OEA, 'Port A'))
+        output('QB', drive(Q, OEB, 'Port B'))
 
 
 def make_shifter():
     with component('Shifter 16',
                    'A barrel shifter: Y = A shifted by N (0-15) while /OE is 0, left when LEFT is 1, otherwise right, '
                    'filling with A15 when ARITH is 1 (SAR). C is the last bit shifted out, or CIN when N is 0. A left '
-                   'shift reverses A, shifts right and reverses back; the right shift is 17 bits wide, with a guard '
-                   'bit below A0 that catches the bit shifted out. Four stages of Mux 2x4s (74HC157s), one per bit '
-                   'of N.'):
+                   'shift reverses A, shifts right and reverses back (by which output driver is on); the right shift '
+                   'is 17 bits wide, with a guard bit below A0 that catches the bit shifted out. Two stages of Mux '
+                   '4x2s (74HC153s), each shifting by two bits of N.'):
         A, N = bus_input('A', 16), bus_input('N', 4)
         LEFT, ARITH, CIN, OE = inputs('LEFT', 'ARITH', 'CIN', '/OE')
-        bits = bus(low(), mux_bus(LEFT, A, A.reversed()))  # bit 0 is the guard
+        bits = bus(low(), mux_bus(LEFT, A, A.reversed(), 'Reverse'))  # bit 0 is the guard
         fill = ARITH & A[15]
-        for stage, select in enumerate(N):  # shift right by 1, 2, 4 and 8
-            distance = 1 << stage
-            bits = mux_bus(select, bits, bits[distance:] + [fill] * distance)
-        result = mux_bus(LEFT, bits[1:], bits[1:].reversed())
-        output('Y', drive(result, OE))
+        for select, step in ((N[0:2], 1), (N[2:4], 4)):  # shift right by 0-3, then by 0, 4, 8 or 12
+            bits = mux4_bus(select, [bits[k * step:] + [fill] * (k * step) for k in range(4)])
+        Y = output('Y', drive(bits[1:], OE | LEFT, 'Right out'))
+        drive(bits[1:].reversed(), nand(~OE, LEFT), 'Left out') >> Y
         output('C', mux(any_of(N), CIN, bits[0]))
 
 
@@ -147,7 +157,7 @@ def make_immediate_unit():
                    'instruction bits, OLD bits (the destination register\'s old value, for LHI) or Low/High.'):
         IR, OLD, SEL = bus_input('IR', 12), bus_input('OLD', 8), bus_input('SEL', 3)
         OE = inputs('/OE')
-        decoder = Part('Decoder 3to8')
+        decoder = Part('Decoder 3to8', name='Select')
         SEL >> decoder.A
         ~OE >> decoder.E
 
@@ -161,7 +171,7 @@ def make_immediate_unit():
                    'ZERO': [low()] * 16}
         Y = output('Y', width=16)
         for index, kind in enumerate(IMMEDIATES):
-            drive(choices[kind], decoder['/Y'][index]) >> Y
+            drive(choices[kind], decoder['/Y'][index], kind) >> Y
 
 
 # ---------------------------------------------------------------------------- status
@@ -176,16 +186,17 @@ def make_status():
         WZN, WC, WV = inputs('WZN', 'WC', 'WV')
         RESTORE, SAVE, IESET, IECLR, CLK = inputs('RESTORE', 'SAVE', 'IESET', 'IECLR', 'CLK')
         flags = [flip_flop(CLK) for _ in range(5)]  # Z N C V IE
-        saved = [flip_flop(CLK) for _ in range(5)]  # their exception copies
-        RESTORE_not, SAVE_not = ~RESTORE, ~SAVE
+        copies = Part('Register 8', name='Saved flags')  # their exception copies, loaded by SAVE
+        ~SAVE >> copies['/E']
+        CLK >> copies.CLK
+        saved = copies.Q
+        sources = mux_bus(RESTORE, flags_in, saved[:4], 'Restore')
         for i, write in enumerate([WZN, WZN, WC, WV]):
-            source = mux(RESTORE, flags_in[i], saved[i].Q, RESTORE_not)
-            mux(write | RESTORE, flags[i].Q, source) >> flags[i].D
+            mux(write | RESTORE, flags[i].Q, sources[i]) >> flags[i].D
         # IE: set by EI, cleared by DI (and on entering an exception), restored by RETI.
         kept = flags[4].Q & ~(IECLR | RESTORE)
-        any_of([IESET, kept, RESTORE & saved[4].Q]) >> flags[4].D
-        for flag, copy in zip(flags, saved):
-            mux(SAVE, copy.Q, flag.Q, SAVE_not) >> copy.D
+        any_of([IESET, kept, RESTORE & saved[4]]) >> flags[4].D
+        bus([flag.Q for flag in flags], [low()] * 3) >> copies.D
         for name, flag in zip(['Z', 'N', 'C', 'V', 'IE'], flags):
             output(name, flag.Q)
 
@@ -463,54 +474,51 @@ def make_cpu():
         DI = bus_input('DI', 16)
         IRQ = inputs('IRQ')
         with card('Control'):
-            c = Part('Control Unit')
+            c = Part('Control Unit', name='Control')
 
         with card('Datapath'):
-            def register():
-                part = Part('Register 16')
+            def register(name):  # one read port at most, so no Register 16's pair of them
+                part = Part('Word Register', name=name)
                 CLK >> part.CLK
                 return part
 
-            ir, mar, t, epc = (register() for _ in range(4))
-            pc = Part('Program Counter')
+            ir, mar, t, epc = (register(name) for name in ('IR', 'MAR', 'T', 'EPC'))
+            pc = Part('Program Counter', name='PC')
             CLK >> pc.CLK
             c.PCINC >> pc.INC
             DI >> ir.D
             c['/LDIR'] >> ir['/LOAD']
-            low() >> ir['/OEA']
-            high() >> ir['/OEB']
-            IR = ir.QA
+            IR = ir.Q
 
         with card('ALU'):
-            alu = Part('ALU 16')
+            alu = Part('ALU 16', name='ALU')
             for part, load in ((pc, '/LDPC'), (mar, '/LDMAR'), (t, '/LDT'), (epc, '/LDEPC')):
                 alu.Y >> part.D
                 c[load] >> part['/LOAD']
             # X bus (the ALU's A): register file, PC, EPC, T or the shifter. Y bus (its B): register file or
-            # immediate. Address bus: PC or MAR. MAR, T and EPC don't use their second read port.
+            # immediate. Address bus: PC or MAR.
             X, Y = alu.A, alu.B
             c['/XPC'] >> pc['/OEA']
             c['/APC'] >> pc['/OEB']
-            c['/AMAR'] >> mar['/OEA']
-            c['/XT'] >> t['/OEA']
-            c['/XEPC'] >> epc['/OEA']
-            high() >> [mar['/OEB'], t['/OEB'], epc['/OEB']]
-            for part in (pc, t, epc):
-                part.QA >> X
-            address = mar.QA  # the address bus, as a net MAR and PC both drive
-
+            pc.QA >> X
         with card('Datapath'):
+            drive(t.Q, c['/XT'], 'T to X') >> X
+            drive(epc.Q, c['/XEPC'], 'EPC to X') >> X
+            address = drive(mar.Q, c['/AMAR'], 'MAR to A')  # the address bus, as a net MAR and PC both drive
+
+        with card('Registers'):
             # Register file and its address multiplexers.
-            registers = Part('Register File')
+            registers = Part('Register File', name='Registers')
             CLK >> registers.CLK
             c.RFWE >> registers.WE
-            mux_bus(c.RASYS, IR[6:9], IR[5:8]) >> registers.RA
-            mux_bus(c.RBDEST, IR[3:6], IR[9:12]) >> registers.RB
-            mux_bus(c.WSEL7, IR[9:12], [high()] * 3) >> registers.W  # WSEL7 picks R7, the link register
-            drive(registers.QA, c['/XRF']) >> X
-            drive(registers.QB, c['/YRF']) >> Y
+            mux_bus(c.RASYS, IR[6:9], IR[5:8], 'RA select') >> registers.RA
+            mux_bus(c.RBDEST, IR[3:6], IR[9:12], 'RB select') >> registers.RB
+            mux_bus(c.WSEL7, IR[9:12], [high()] * 3, 'W select') >> registers.W  # WSEL7 picks R7, the link register
+            drive(registers.QA, c['/XRF'], 'RA to X') >> X
+            drive(registers.QB, c['/YRF'], 'RB to Y') >> Y
 
-            immediate = Part('Immediate Unit')
+        with card('ALU'):
+            immediate = Part('Immediate Unit', name='Immediate')
             IR[:12] >> immediate.IR
             registers.QB[:8] >> immediate.OLD
             bus(c.IMM0, c.IMM1, c.IMM2) >> immediate.SEL
@@ -519,11 +527,11 @@ def make_cpu():
 
         with card('Control'):
             # ALU control, flags and the branch condition.
-            status = Part('Status')
+            status = Part('Status', name='Flags')
             bus(c.OP0, c.OP1, c.OP2, c.OP3) >> alu.OP
             (c.CIN1 | (c.CINC & status.C)) >> alu.Cin
         with card('ALU'):
-            shifter = Part('Shifter 16')
+            shifter = Part('Shifter 16', name='Shifter')
             registers.QA >> shifter.A
             shifter.Y >> X
             registers.QB[:4] >> shifter.N
@@ -559,10 +567,10 @@ def make_cpu():
             byte = ~word
 
             write_back = registers.D
-            drive(alu.Y, c['/WALU']) >> write_back  # register file <- ALU
+            drive(alu.Y, c['/WALU'], 'ALU to RF') >> write_back  # register file <- ALU
 
             def lane(sources, targets, enable_a, enable_b):
-                drive(sources, nand(enable_a, enable_b)) >> targets
+                drive(sources, nand(enable_a, enable_b), 'Byte lane') >> targets
 
             # Loads: register file <- the addressed byte(s), zero-extended for LB.
             lane(DI[:8], write_back[:8], c.MLOAD, even_ok)  # low from low
@@ -612,7 +620,7 @@ assert SLOT_PINS == 32 and Addresses['IoBase'] + IoBus['SlotSize'] * IoBus['Slot
 def selected(CS, A, used):
     """1 when /CS is low and the address bits above the card's registers (A<used>-A6) are 0, so a
     card's registers appear once in its slot, as the emulator has them, rather than repeating."""
-    return ~(CS | any_of(A[used:]))
+    return ~any_of(differs(A[used:], 0, CS))
 
 
 def make_timer():
@@ -626,20 +634,18 @@ def make_timer():
         write_not = CE | WE
         write = ~write_not
 
-        reload = Part('Register 16')  # N, the period
+        reload = Part('Word Register', name='Period')  # N, the period
         D >> reload.D
         write_not >> reload['/LOAD']
-        (CE | OE) >> reload['/OEB']
-        low() >> reload['/OEA']
         CLK >> reload.CLK
-        period = reload.QA
+        period = reload.Q
 
-        counter = Part('Counter 16')
-        drive(D, write_not) >> counter.D  # count <- D on a write, otherwise the period
-        drive(period, write) >> counter.D
-        running = any_of(period)
+        counter = Part('Counter 16', name='Count')
+        drive(D, write_not, 'Load D') >> counter.D  # count <- D on a write, otherwise the period
+        drive(period, write, 'Reload') >> counter.D
+        running = nonzero(period)
         count = counter.Q
-        fire_now = running & ~any_of(count[1:]) & count[0]  # the count is 1: this tick is the Nth
+        fire_now = running & equals(count, 1)  # the count is 1: this tick is the Nth
         fires = TICK & fire_now
         nor(write, fires) >> counter['/LOAD']
         nand(TICK, running) >> counter['/EN']  # counting down
@@ -648,7 +654,7 @@ def make_timer():
 
         pending = flip_flop(CLK)
         ((pending.Q | fires) & ~ACK) >> pending.D
-        output('Q', reload.QB)
+        output('Q', drive(period, CE | OE, 'Read'))
         output('IRQ', pending.Q | fire_now)
 
 
@@ -660,16 +666,16 @@ def make_interrupt_controller():
                    'edge with /CE and /WE low, and is 0 at power-up. Reading (/CE and /OE low) drives Q0-Q7.'):
         D, IRQ = bus_input('D', 8), bus_input('IRQ', 8)
         CE, WE, OE, RS, CLK = inputs('/CE', '/WE', '/OE', 'RS', 'CLK')
-        register = Part('Register 8')  # the mask, a 74HC377
+        register = Part('Register 8', name='Mask')  # the mask, a 74HC377
         D >> register.D
         nand(~(CE | WE), RS) >> register['/E']
         CLK >> register.CLK
         mask = register.Q
         read = ~(CE | OE)
         Q = output('Q', width=8)
-        drive(IRQ, nand(read, ~RS)) >> Q
-        drive(mask, nand(read, RS)) >> Q
-        output('INT', any_of([irq & m for irq, m in zip(IRQ, mask)]))
+        drive(IRQ, nand(read, ~RS), 'Read pending') >> Q
+        drive(mask, nand(read, RS), 'Read mask') >> Q
+        output('INT', any_and(zip(IRQ, mask)))
 
 
 def make_system_slot():
@@ -685,7 +691,7 @@ def make_system_slot():
         here = selected(CS, A, 3)
         Q = output('Q', width=16)
 
-        timer = Part('Timer')
+        timer = Part('Timer', name='Timer')
         D >> timer.D
         nand(here, A[2] & ~A[1]) >> timer['/CE']
         WR >> timer['/WE']
@@ -695,7 +701,7 @@ def make_system_slot():
         CLK >> timer.CLK
         timer.Q >> Q
 
-        controller = Part('Interrupt Controller')
+        controller = Part('Interrupt Controller', name='Interrupts')
         D[:8] >> controller.D
         bus(timer.IRQ, IRQ[1:]) >> controller.IRQ
         nand(here, ~A[2]) >> controller['/CE']
@@ -758,7 +764,7 @@ def make_computer():
         # The CPU's own parts say which CPU card they're on; the rest of the machine is tagged here.
         with card('Memory'):
             CLK = clock_source()
-            stretcher = Part('Clock Stretcher')
+            stretcher = Part('Clock Stretcher', name='Clock')
             CLK >> stretcher.CLK
             clock = stretcher.Y  # what the CPU and the cards run on
         cpu = Part('Kestrel16 CPU')
@@ -767,7 +773,7 @@ def make_computer():
         with card('Memory'):
             decode = rom(['A%d' % i for i in range(10, 16)], ['/RAM', '/IO'], image='Address Decode.bin')
             cpu.A[10:] >> [decode['A%d' % i] for i in range(10, 16)]
-            slot_decoder = Part('Decoder 3to8')
+            slot_decoder = Part('Decoder 3to8', name='Slot select')
             cpu.A[SLOT_ADDRESS_BITS:SLOT_ADDRESS_BITS + 3] >> slot_decoder.A
             ~decode['/IO'] >> slot_decoder.E
             CS = slot_decoder['/Y']
@@ -811,6 +817,7 @@ def make_computer():
 
 if __name__ == '__main__':
     make_mux()
+    make_mux_4x2()
     make_counter_4()
     make_counter_16()
     make_shifter()

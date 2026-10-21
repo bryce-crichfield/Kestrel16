@@ -18,12 +18,11 @@ python Tools/eda/kicad.py "Register 16" --check
 "C:/Program Files/KiCad/9.0/bin/python.exe" Tools/eda/route.py "Build/KiCad/Register 16"
 ```
 
-To place onto a fixed 3U Eurocard (160 x 100 mm, with the DIN 41612 connector already on the left edge) instead
-of a board sized to fit, make the template once and pass it to the placer. Each chip gets a slot of its own size plus `--gap`; shrink the gap if the chips don't fit:
+To place onto a fixed card (the 6U Eurocard template in `templates/6U_Eurocard`, with the DIN 41612 connector on the left edge) instead
+of a board sized to fit, pass the template to the placer. Each chip gets a slot of its own size plus `--gap`; shrink the gap if the chips don't fit. Chips sit in aligned rows; `--packing auto` (the default) packs them freely only when rows don't fit or leave too little spare room, and `--packing rows` or `free` forces one:
 
 ```sh
-"C:/Program Files/KiCad/9.0/bin/python.exe" Tools/eda/template.py
-"C:/Program Files/KiCad/9.0/bin/python.exe" Tools/eda/place.py "Build/KiCad/Register 16" --template "Tools/eda/templates/Eurocard 3U.kicad_pcb"
+"C:/Program Files/KiCad/9.0/bin/python.exe" Tools/eda/place.py "Build/KiCad/Register 16" --template "Tools/eda/templates/6U_Eurocard/6U_Eurocard.kicad_pcb"
 ```
 
 `kicad.py` runs under any Python 3 with PyYAML. `place.py` and `route.py` need `pcbnew`, which only KiCad's own Python
@@ -41,7 +40,7 @@ For Register 16, placement takes under a minute. Routing takes about 30 s for ea
 | `parts.yaml` | Maps each primitive to a real part: symbol, footprint, pin numbers, power pins, and ties for unused inputs |
 | `kicad.py` | Writes the schematic, one sheet per component. `--check` proves it matches the netlist |
 | `cards.py` | Splits the design into the cards `hdl.card()` tags, and reports each card's connector pins and each crossing net's drivers |
-| `template.py` | Writes `templates/Eurocard 3U.kicad_pcb`: the card outline and its DIN 41612 connector, for `place.py --template` |
+| `template.py` | Writes `templates/Eurocard 3U.kicad_pcb`, a generated 3U card outline and its DIN 41612 connector, for `place.py --template` |
 | `place.py` | Anneals the chips into a grid, adds caps, keeps the template's connector, and writes 4-layer boards |
 | `route.py` | Routes the candidates with Freerouting, scores them, runs DRC, and writes the fabrication files |
 | `kicad_env.py` | Finds KiCad, and holds the pcbnew workarounds below |

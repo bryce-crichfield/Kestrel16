@@ -4,8 +4,8 @@
 
 Each component becomes a .kicad_sch file. A component used inside another becomes a hierarchical sheet,
 and one file serves every instance, so four Register 16s share one sheet with four sets of references.
-The top component is a card: its ports become global labels, and its backplane connector, P1, is drawn with the
-same footprint as the card template's. Its pins are left unconnected until a pin map assigns the ports to them.
+The top component is a card: its ports become global labels, and its backplane connectors, P1 and P2, are drawn with
+the card template's footprint. Their pins are left unconnected until a pin map assigns the ports to them.
 
 Nothing is wired with lines. Every pin gets a label naming its net, and pins with the same label are
 connected. A net is named after its port if it has one, GND or VCC if it is tied there (power symbols),
@@ -45,9 +45,20 @@ NAMESPACE = uuid.UUID('9b8a3c52-27f4-4a8e-9a43-6f1e0c3f5d10')
 POWER_KINDS = {'Low': 'GND', 'High': 'VCC'}
 # Every top component is a card, and every card plugs into the backplane through this, as on the card template.
 CONNECTOR = ('Connector:DIN41612_03x32_C_Split', 'Connector_DIN:DIN41612_C_3x32_Male_Horizontal_THT')
+CONNECTORS = ('P1', 'P2')  # two 96-pin connectors along the card's long edge
 # ERC findings the unmapped connector causes: the card's inputs drive nothing. Unwired inputs inside are tied to GND,
 # so an undriven pin can only be on a card input's net.
 UNMAPPED = {'pin_not_driven', 'label_dangling', 'global_label_dangling'}
+
+
+def sheet_name(node, siblings):
+    """A child sheet's name: the instance's own name from hdl (R3, IR), else its component's, then " #<node id>"
+    unless the name alone is unique among its siblings. KiCad wants names unique within a sheet, and place.py
+    drops the " #<id>" when it labels the chips."""
+    name = node.name or node.component
+    if node.name and sum(1 for other, *_ in siblings if other.name == node.name) == 1:
+        return name
+    return '%s #%d' % (name, node.id)
 
 
 def kicad_name(name):
@@ -380,15 +391,16 @@ class Sheet:
         self.attach(('power', 'GND'), *placed.pin_point(2))
 
     def connector(self):
-        """The card's backplane connector, P1, right of the drawing: one unit per row. Its footprint matches the
-        one on the card template, so place.py hands the template's P1 these pads' nets. Until a pin map says which
-        port goes on which pin, every pin is left unconnected and the ports are global labels only."""
+        """The card's backplane connectors, P1 and P2 as on VME, right of the drawing: one unit per row. Their
+        footprint matches the ones on the card template, so place.py hands the template's P1 and P2 these pads'
+        nets. Until a pin map says which port goes on which pin, every pin is left unconnected and the ports are
+        global labels only."""
         symbol = self.project.symbols.get(CONNECTOR[0])
         x = snap(self.right + SLOT)
-        for unit in range(1, symbol.units + 1):
-            placed = Placed(symbol, unit, (x + (unit - 1) * SLOT, MARGIN), ('P', 'connector'), 'DIN 41612 96-pin',
+        for k, (reference, unit) in enumerate((r, u) for r in CONNECTORS for u in range(1, symbol.units + 1)):
+            placed = Placed(symbol, unit, (x + k * SLOT, MARGIN), ('P', reference), 'DIN 41612 96-pin',
                             CONNECTOR[1])
-            placed.reference = 'P1'
+            placed.reference = reference
             low = min(-y for u, _, y, _, _ in symbol.pins.values() if u == unit)
             placed.at = (placed.at[0], snap(MARGIN - low))  # its top pin on the margin
             self.place(placed)
@@ -427,6 +439,8 @@ class Sheet:
                 logical = {str(number): (node.id, pin) for pin, number in pins if not pin.startswith('.')}
                 placed = self.place(Placed(symbol, unit, self.chip_cell(symbol), package, chip['value'],
                                            chip.get('footprint', ''), logical))
+                if node.name:  # a mapped part has no sheet to carry its instance's name, so its chips do
+                    placed.fields = dict(placed.fields, Block=node.name)
                 for pin, number in pins:
                     if pin.startswith('.'):
                         internal.setdefault(pin, []).append(placed.pin_point(number))
@@ -582,7 +596,7 @@ class Project:
             block = [Sym('sheet'), [Sym('at'), at[0], at[1]], [Sym('size'), size[0], size[1]],
                      [Sym('stroke'), [Sym('width'), 0.1524], [Sym('type'), Sym('solid')]],
                      [Sym('fill'), [Sym('color'), 0, 0, 0, 0.0]], [Sym('uuid'), sheet_uuid],
-                     [Sym('property'), 'Sheetname', '%s %d' % (node.component, node.id), [Sym('at'), at[0], at[1] - 0.7, 0],
+                     [Sym('property'), 'Sheetname', sheet_name(node, sheet.sheets), [Sym('at'), at[0], at[1] - 0.7, 0],
                       FONT + [[Sym('justify'), Sym('left'), Sym('bottom')]]],
                      [Sym('property'), 'Sheetfile', node.component + '.kicad_sch', [Sym('at'), at[0], at[1] + size[1] + 0.6, 0],
                       FONT + [[Sym('justify'), Sym('left'), Sym('top')]]]]
