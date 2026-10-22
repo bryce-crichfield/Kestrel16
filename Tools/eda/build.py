@@ -40,6 +40,7 @@ PLACE = [
     ('--label-size', 'Label text height, mm', str, '3'),
     ('--back-labels', 'Chip labels on the back too', bool, False),
     ('--cohesion', 'Pull of each block on its chips (0: off)', str, '3'),
+    ('--inflate', 'Rounds growing congested chips and placing again (0: off)', int, 0),
     ('--runs', 'Anneals', int, 6),
     ('--candidates', 'Placements kept for routing', int, 5),
     ('--moves', 'Moves per anneal (blank: 4000 per chip)', str, ''),

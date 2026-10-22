@@ -13,6 +13,11 @@ the headers go along the bottom edge with the bulk cap (from the connector's sid
 board, and the board is written as <project>.kicad_pcb: 4 layers,
 In1 a GND plane and In2 a VCC plane, ready for routing. The best few placements are also written as
 Candidates/1.kicad_pcb, 2, ... for route.py, which routes each and keeps the best.
+
+With --inflate N, up to N more rounds follow: congestion.py's estimate (pads blocking) of the best placement finds
+the chips whose slots are busy, their gaps grow a step (to at most 1.5 times), and the chips are packed and annealed
+again. It stops when no chip is busy, the grown slots don't pack, or the congestion stops improving, and keeps the
+least congested round. Spares are what pays for the room, so a full board grows little.
 """
 import argparse
 import json
@@ -24,11 +29,13 @@ import shutil
 import subprocess
 import sys
 import time
+from collections import namedtuple
 
 import pcbnew
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sexpr  # noqa: E402
+from congestion import BUSY, rudy  # noqa: E402
 from kicad_env import POWER, fill_zones, find_kicad, kicad_cli, net_name  # noqa: E402
 from sexpr import find, find_all  # noqa: E402
 
@@ -36,6 +43,10 @@ EDGE = 5.0       # mm from the board edge to the first slot or header
 CAP_GAP = 2.5    # mm from a VCC pad to its cap
 CHIP_ANGLE = 90  # locked rotation: every DIP lies on its side, pin 1 bottom left
 UPRIGHT = 0      # with --vertical: every DIP stands up, pin 1 top left
+PAD = 1.6        # mm, a DIP or connector pad, for congestion's blockage
+GROW_STEP = 0.25  # --inflate grows a congested chip's gap by this much of itself each round
+MOST_GROWN = 1.5  # up to this many times its gap
+LEAST_GROWN = 0.75  # and a quiet chip's gap across it shrinks to no less than this, to pay for it
 
 
 def mm(value):
@@ -527,6 +538,37 @@ def centring(chips, region, obstacles):
     return 0, 0
 
 
+Layout = namedtuple('Layout', 'width height fixed fixed_at placer results slot_of')  # one round's placements
+
+
+def congestion_of(design, chips, offsets, layout, tile=2.54):
+    """congestion.py's estimate of a layout's best placement, pads blocking, without writing a board:
+    (overflow, peak, {chip: the 90th percentile utilisation over its slot})."""
+    placer, (_, slots, shift) = layout.placer, layout.results[0]
+    at = dict(layout.fixed)
+    for chip, slot in zip(chips, slots):
+        x, y = (c + d for c, d in zip(placer.centre(slot), shift))
+        at.update({(chip, pad): (x + dx, y + dy) for pad, (dx, dy) in offsets[chip].items()})
+    nets = {}
+    for net, pins in design.nets.items():
+        points = [at[pin] for pin in pins if pin in at]
+        if net.lstrip('/') not in POWER and len(points) > 1:
+            nets[net] = points
+    pads = [(x - PAD / 2, y - PAD / 2, x + PAD / 2, y + PAD / 2) for x, y in at.values()]
+    grid = rudy((layout.width, layout.height), nets, tile, pads)
+    values = [u for row in grid for u in row]
+    overflow = sum((u - BUSY) ** 2 for u in values if u > BUSY) * tile * tile
+    peaks = {}
+    for chip, slot in zip(chips, slots):
+        x, y = (c + d for c, d in zip(placer.centre(slot), shift))
+        w, h = layout.slot_of[chip]
+        rows_under = range(max(0, int((y - h / 2) // tile)), min(len(grid), math.ceil((y + h / 2) / tile)))
+        cols_under = range(max(0, int((x - w / 2) // tile)), min(len(grid[0]), math.ceil((x + w / 2) / tile)))
+        under = sorted(grid[r][c] for r in rows_under for c in cols_under)
+        peaks[chip] = under[int(0.9 * (len(under) - 1))] if under else 0.0
+    return overflow, max(values), peaks
+
+
 def inventory(chips, slot_of, density):
     """How many slots of each size: each size's chips and density - 1 spares (at least one)."""
     counts = {}
@@ -536,7 +578,7 @@ def inventory(chips, slot_of, density):
 
 
 def place_project(directory, gap=(7.0, 4.0), density=1.4, runs=6, moves=None, seed=1, cli=None, candidates=5,
-                  template=None, packing='auto', vertical=False, label=None, back=False, cohesion=3.0):
+                  template=None, packing='auto', vertical=False, label=None, back=False, cohesion=3.0, inflate=0):
     """Writes Candidates/1..N.kicad_pcb and <project>.kicad_pcb (a copy of the best); returns that path. label is
     (text, corner, angle, size) for the card's name in silkscreen, or None. gap is
     (along each chip, across it), so it suits chips on their sides or, with vertical, standing up."""
@@ -567,97 +609,161 @@ def place_project(directory, gap=(7.0, 4.0), density=1.4, runs=6, moves=None, se
     for reference in design.parts:
         angle = 90 if design.kind(reference) == 'header' else chip_angle
         offsets[reference], sizes[reference], _ = pad_offsets(design.load(reference), angle)
-    # The inventory: each chip's slot size, from its own footprint.
-    slot_of = {chip: slot_size(sizes[chip], gap) for chip in chips}
     header_height = max((sizes[h][1] for h in kinds['header'] + kinds['bulk']), default=0)
     strip = header_height + EDGE  # the header and bulk cap row along the bottom edge
-    if template:
-        # The board is fixed: the most spares that still pack, from density 2 down to none. Aligned rows unless
-        # they don't fit or leave it tight, and free packing would give more room.
-        width, height = template.size
-        obstacles = [(x0 - 1, y0 - 1, x1 + 1, y1 + 1) for x0, y0, x1, y1 in template.keepouts]
-
-        def densest(packer):
-            for step in range(21):
-                density = round(2.0 - step * 0.05, 2)
-                counts = inventory(chips, slot_of, density)
-                result = packer([s for s, n in counts.items() for _ in range(n)], EDGE, EDGE, width - EDGE,
-                                height - strip, obstacles)
-                if result:
-                    return density, result
-            return 0, None
-
-        used, packed = densest(rows) if packing != 'free' else (0, None)
-        if packing != 'rows' and (packed is None or used < ROOMY):
-            free_used, free_packed = densest(pack)
-            if free_packed and free_used > used:
-                print('  rows %s, so the chips are packed freely' % ('leave density %.2f' % used if packed
-                                                                       else "don't fit"))
-                used, packed = free_used, free_packed
-        if packed is None:
-            need = sum(w * h for w, h in slot_of.values())
-            raise SystemExit('%d chips need %.0f cm2 of slots and do not pack onto the %g x %g mm template (%.0f cm2 '
-                             'inside the edges); try a smaller --gap or a bigger board'
-                             % (len(chips), need / 100, width, height,
-                                (width - 2 * EDGE) * (height - EDGE - strip) / 100))
-        print('  %d spare slots (density %.2f)' % (len(packed) - len(chips), used))
-    else:
-        obstacles = []
-        counts = inventory(chips, slot_of, density)
-        slots = [s for s, n in counts.items() for _ in range(n)]
-        area = sum(w * h for w, h in slots)
-        inner = max(math.sqrt(area * 1.6) * 1.1, max(w for w, _ in slots),
-                    sum(sizes[h][0] + 5 for h in kinds['header'] + kinds['bulk']))
-        packed = (pack if packing == 'free' else rows)(slots, EDGE, EDGE, EDGE + inner, float('inf'))
-        width = 2 * EDGE + inner
-        height = max(y + h / 2 for (_, h), (_, y) in packed) + EDGE + strip
-    centres = [centre for _, centre in packed]
-    slot_classes = [size for size, _ in packed]
-
-    # Headers in a row along the bottom edge, then the bulk cap after them, stepping past template footprints.
-    # The row starts from the side the template's connector is on, so the bulk cap sits by where power comes in.
-    fixed_at, y = {}, height - EDGE - header_height / 2
-    entry = [x for (r, _), (x, _) in template.pads.items() if r in alias.values()] if template else []
-    step = -1 if entry and sum(entry) / len(entry) > width / 2 else 1
-    x = EDGE if step > 0 else width - EDGE  # the row's leading edge
-
-    for part in kinds['header'] + kinds['bulk']:
-        w = sizes[part][0]
-        while template and not template.clear(min(x, x + step * w), y - header_height / 2, max(x, x + step * w),
-                                              y + header_height / 2):
-            x += step
-        fixed_at[part] = (x + step * w / 2, y)
-        x += step * (w + 5)
-    if template and not EDGE <= x - step * 5 <= width - EDGE:
-        print('  warning: the headers and bulk cap run past the board edge')
-    fixed ={(ref, pad): (cx + dx, cy + dy) for ref, (cx, cy) in fixed_at.items() for pad, (dx, dy) in offsets[ref].items()}
-    if template:
-        fixed.update({(ref, pad): at for ref, t in alias.items() for (r, pad), at in template.pads.items() if r == t})
-
     signal_nets = [pins for net, pins in design.nets.items() if net.lstrip('/') not in POWER]
     groups = hierarchy_groups(design, chips)
     if cohesion:
         print('  %d blocks pull their chips together (cohesion %g)' % (len(groups), cohesion))
-    placer = Placer(chips, offsets, signal_nets, fixed, centres, [slot_of[c] for c in chips], slot_classes,
-                    groups, cohesion)
     moves = moves or 4000 * len(chips)
-    rng = random.Random(seed)
-    results = []
-    start = time.time()
-    for run in range(runs):
-        cost, slots = placer.anneal(rng, moves)
-        results.append((cost, slots))
-        print('  anneal %d of %d: score %.0f, wirelength %.0f mm (%.0f s)'
-              % (run + 1, runs, cost, placer.wirelength(slots), time.time() - start))
-    random_cost = sum(placer.wirelength(placer.anneal(random.Random(seed + run), 0)[1]) for run in range(5)) / 5
-    results.sort()
-    region = (EDGE, EDGE, width - EDGE, height - strip)
-    results = [(cost, slots, centring([(placer.centre(s), slot_of[c]) for c, s in zip(chips, slots)], region,
-                                      obstacles)) for cost, slots in results]
-    print('%s: %d chips in %d slots (%s); best %.0f mm, random %.0f mm'
-          % (name, len(chips), len(centres), ', '.join('%d of %g x %g' % (slot_classes.count(s), s[0], s[1])
-                                                       for s in sorted(set(slot_classes))),
-             placer.wirelength(results[0][1]), random_cost))
+
+    def lay(slot_of, first=True):
+        """Packs the chips' slots (slot_of: chip -> slot size) and anneals them: a Layout, or None when a later
+        round's slots don't pack."""
+        if template:
+            # The board is fixed: the most spares that still pack, from density 2 down to none. Aligned rows unless
+            # they don't fit or leave it tight, and free packing would give more room.
+            width, height = template.size
+            obstacles = [(x0 - 1, y0 - 1, x1 + 1, y1 + 1) for x0, y0, x1, y1 in template.keepouts]
+
+            def densest(packer):
+                for step in range(21):
+                    density = round(2.0 - step * 0.05, 2)
+                    counts = inventory(chips, slot_of, density)
+                    result = packer([s for s, n in counts.items() for _ in range(n)], EDGE, EDGE, width - EDGE,
+                                    height - strip, obstacles)
+                    if result:
+                        return density, result
+                return 0, None
+
+            used, packed = densest(rows) if packing != 'free' else (0, None)
+            if packing != 'rows' and (packed is None or used < ROOMY):
+                free_used, free_packed = densest(pack)
+                if free_packed and free_used > used:
+                    print('  rows %s, so the chips are packed freely' % ('leave density %.2f' % used if packed
+                                                                           else "don't fit"))
+                    used, packed = free_used, free_packed
+            if packed is None:
+                if not first:
+                    return None
+                need = sum(w * h for w, h in slot_of.values())
+                raise SystemExit('%d chips need %.0f cm2 of slots and do not pack onto the %g x %g mm template (%.0f '
+                                 'cm2 inside the edges); try a smaller --gap or a bigger board'
+                                 % (len(chips), need / 100, width, height,
+                                    (width - 2 * EDGE) * (height - EDGE - strip) / 100))
+            print('  %d spare slots (density %.2f)' % (len(packed) - len(chips), used))
+        else:
+            obstacles = []
+            counts = inventory(chips, slot_of, density)
+            slots = [s for s, n in counts.items() for _ in range(n)]
+            area = sum(w * h for w, h in slots)
+            inner = max(math.sqrt(area * 1.6) * 1.1, max(w for w, _ in slots),
+                        sum(sizes[h][0] + 5 for h in kinds['header'] + kinds['bulk']))
+            packed = (pack if packing == 'free' else rows)(slots, EDGE, EDGE, EDGE + inner, float('inf'))
+            width = 2 * EDGE + inner
+            height = max(y + h / 2 for (_, h), (_, y) in packed) + EDGE + strip
+        centres = [centre for _, centre in packed]
+        slot_classes = [size for size, _ in packed]
+
+        # Headers in a row along the bottom edge, then the bulk cap after them, stepping past template footprints.
+        # The row starts from the side the template's connector is on, so the bulk cap sits by where power comes in.
+        fixed_at, y = {}, height - EDGE - header_height / 2
+        entry = [x for (r, _), (x, _) in template.pads.items() if r in alias.values()] if template else []
+        step = -1 if entry and sum(entry) / len(entry) > width / 2 else 1
+        x = EDGE if step > 0 else width - EDGE  # the row's leading edge
+
+        for part in kinds['header'] + kinds['bulk']:
+            w = sizes[part][0]
+            while template and not template.clear(min(x, x + step * w), y - header_height / 2, max(x, x + step * w),
+                                                  y + header_height / 2):
+                x += step
+            fixed_at[part] = (x + step * w / 2, y)
+            x += step * (w + 5)
+        if template and not EDGE <= x - step * 5 <= width - EDGE:
+            print('  warning: the headers and bulk cap run past the board edge')
+        fixed = {(ref, pad): (cx + dx, cy + dy) for ref, (cx, cy) in fixed_at.items()
+                 for pad, (dx, dy) in offsets[ref].items()}
+        if template:
+            fixed.update({(ref, pad): at for ref, t in alias.items() for (r, pad), at in template.pads.items()
+                          if r == t})
+
+        placer = Placer(chips, offsets, signal_nets, fixed, centres, [slot_of[c] for c in chips], slot_classes,
+                        groups, cohesion)
+        rng = random.Random(seed)
+        results = []
+        start = time.time()
+        for run in range(runs):
+            cost, slots = placer.anneal(rng, moves)
+            results.append((cost, slots))
+            print('  anneal %d of %d: score %.0f, wirelength %.0f mm (%.0f s)'
+                  % (run + 1, runs, cost, placer.wirelength(slots), time.time() - start))
+        random_cost = sum(placer.wirelength(placer.anneal(random.Random(seed + run), 0)[1]) for run in range(5)) / 5
+        results.sort()
+        region = (EDGE, EDGE, width - EDGE, height - strip)
+        results = [(cost, slots, centring([(placer.centre(s), slot_of[c]) for c, s in zip(chips, slots)], region,
+                                          obstacles)) for cost, slots in results]
+        print('%s: %d chips in %d slots (%s); best %.0f mm, random %.0f mm'
+              % (name, len(chips), len(centres), ', '.join('%d of %g x %g' % (slot_classes.count(s), s[0], s[1])
+                                                           for s in sorted(set(slot_classes))),
+                 placer.wirelength(results[0][1]), random_cost))
+        return Layout(width, height, fixed, fixed_at, placer, results, slot_of)
+
+    # The inventory: each chip's slot size, from its own footprint plus its gap, which --inflate grows on the chips
+    # in congestion's hot spots and shrinks, across the chip only (along it is its cap's room), on the quiet ones to
+    # pay for it. Gaps change in steps, so chips alike mostly stay alike and still swap slots.
+    across = 0 if vertical else 1
+    grown = {chip: (1.0, 1.0) for chip in chips}  # each chip's gap factors, (x, y)
+
+    def slot_sizes(factors):
+        return {chip: slot_size(sizes[chip], tuple(g * f for g, f in zip(gap, factors[chip]))) for chip in chips}
+
+    layout = lay(slot_sizes(grown))
+    if inflate:
+        score = congestion_of(design, chips, offsets, layout)
+        print('  congestion: overflow %.0f, peak %.2f' % score[:2])
+        for step in range(inflate):
+            # Chips of one footprint and gap change together, by their median heat, so they keep sharing slots: on a
+            # full board a chip whose slot is a size of its own can't move at all.
+            classes = {}
+            for chip in chips:
+                classes.setdefault((sizes[chip], grown[chip]), []).append(chip)
+            heat = {}
+            for members in classes.values():
+                peaks = sorted(score[2][c] for c in members)
+                heat.update({c: peaks[len(peaks) // 2] for c in members})
+            ranked = sorted(chips, key=lambda c: -heat[c])
+            hot = [c for c in ranked if heat[c] > BUSY and max(grown[c]) < MOST_GROWN]
+            cold = [c for c in ranked[::-1] if heat[c] < BUSY / 2 and grown[c][across] > LEAST_GROWN]
+            if not hot:
+                print('  inflate: no congested chip can grow')
+                break
+            attempt = None
+            while hot and attempt is None:  # the hottest that still pack: all of them, else half, a quarter, ...
+                trial = dict(grown)
+                for chip in hot:
+                    trial[chip] = tuple(min(MOST_GROWN, f + GROW_STEP) for f in grown[chip])
+                for chip in cold:
+                    trial[chip] = tuple(max(LEAST_GROWN, f - GROW_STEP) if i == across else f
+                                        for i, f in enumerate(grown[chip]))
+                print('== inflate %d of %d: %d hot chips grow (%s), %d quiet ones shrink'
+                      % (step + 1, inflate, len(hot), ', '.join(sorted(hot, key=reference_order)), len(cold)),
+                      flush=True)
+                attempt = lay(slot_sizes(trial), first=False)
+                if attempt is None:
+                    print("  they don't pack")
+                    hot = hot[:len(hot) // 2]
+            if attempt is None:
+                print('  keeping the placement before')
+                break
+            grown = trial
+            new = congestion_of(design, chips, offsets, attempt)
+            print('  congestion: overflow %.0f, peak %.2f (was %.0f, %.2f)' % (new[:2] + score[:2]))
+            if new[0] >= score[0]:
+                print('  no better: keeping the placement before')
+                break
+            layout, score = attempt, new
+    width, height, fixed_at, placer, results, slot_of = (layout.width, layout.height, layout.fixed_at,
+                                                         layout.placer, layout.results, layout.slot_of)
 
     def write(slots, shift, path):
         write_board(design, kinds, sizes, offsets, placer, fixed_at, slots, width, height, path, template, alias,
@@ -811,6 +917,8 @@ def main():
     parser.add_argument('--label-size', type=float, default=3.0, help='label text height in mm (default 3)')
     parser.add_argument('--cohesion', type=float, default=3.0, help="how strongly each block's chips (a register, "
                         'its ports) are pulled together; 0 turns it off (default 3)')
+    parser.add_argument('--inflate', type=int, default=0, help="rounds that grow the congested chips' slots and "
+                        'place again (default 0: none)')
     parser.add_argument('--back-labels', action='store_true', help="each chip's part number, block and reference "
                         'mirrored on the back silkscreen too')
     parser.add_argument('--kicad-cli', help="exports the schematic's netlist (default: KiCad's own)")
@@ -825,7 +933,7 @@ def main():
     gap = tuple(float(v) for v in args.gap.lower().split('x'))
     place_project(args.project, gap, args.density, args.runs, args.moves, args.seed, args.kicad_cli,
                   args.candidates, args.template, args.packing, args.vertical,
-                  label, args.back_labels, args.cohesion)
+                  label, args.back_labels, args.cohesion, args.inflate)
 
 
 if __name__ == '__main__':
