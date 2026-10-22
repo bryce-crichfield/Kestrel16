@@ -37,6 +37,11 @@ class App:
         self.kicad = tk.StringVar(value=build.kicad_python(self.settings))
         ttk.Entry(top, textvariable=self.kicad, width=60).grid(row=0, column=1, sticky='we', padx=4)
         ttk.Button(top, text='Browse', command=lambda: self.browse(self.kicad)).grid(row=0, column=2)
+        ttk.Label(top, text='Parts').grid(row=1, column=0, sticky='w', pady=(4, 0))
+        self.parts = tk.StringVar(value=os.path.basename(build.parts_file(self.settings)))
+        picker = ttk.Combobox(top, textvariable=self.parts, values=build.parts_files(), state='readonly', width=30)
+        picker.grid(row=1, column=1, sticky='w', padx=4, pady=(4, 0))
+        picker.bind('<<ComboboxSelected>>', lambda _: (self.save(), self.paint()))
         top.columnconfigure(1, weight=1)
 
         self.grid = ttk.LabelFrame(root, text='Pipeline', padding=8)
@@ -114,6 +119,7 @@ class App:
 
     def save(self):
         self.settings['kicad_python'] = self.kicad.get()
+        self.settings['parts'] = self.parts.get()
         build.save_settings(self.settings)
 
     def configure(self, stage):

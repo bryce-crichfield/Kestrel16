@@ -413,19 +413,19 @@ class Sheet:
             for net, number in power.items():
                 self.attach(('power', net), *holder.pin_point(number))
             if power:  # its decoupling cap; the placer puts one beside each chip's VCC pin
-                self.capacitor(('C', package), 'Device:C', '100nF', 'Capacitor_THT:C_Disc_D3.0mm_W1.6mm_P2.50mm')
+                self.capacitor(('C', package), parts['.capacitors']['decoupling'])
 
         if self.top:  # one bulk cap where power comes in, and tell ERC that something supplies VCC and GND
-            self.capacitor(('C', 'bulk'), 'Device:C_Polarized', '10uF',
-                           'Capacitor_THT:CP_Radial_D5.0mm_P2.00mm')
+            self.capacitor(('C', 'bulk'), parts['.capacitors']['bulk'])
             for net in ('VCC', 'GND'):
                 point = self.take_cell()
                 self.place(Placed(self.project.symbols.get('power:PWR_FLAG'), 1, point, ('#FLG', net), 'PWR_FLAG'))
                 self.attach(('power', net), point, 90)
 
-    def capacitor(self, package, lib_id, value, footprint):
-        """A cap from VCC (pin 1) to GND (pin 2), below the drawing."""
-        placed = self.place(Placed(self.project.symbols.get(lib_id), 1, self.take_cell(), package, value, footprint))
+    def capacitor(self, package, part):
+        """A cap from VCC (pin 1) to GND (pin 2), below the drawing; part is its .capacitors entry."""
+        placed = self.place(Placed(self.project.symbols.get(part['symbol']), 1, self.take_cell(), package,
+                                   part['value'], part['footprint']))
         self.attach(('power', 'VCC'), *placed.pin_point(1))
         self.attach(('power', 'GND'), *placed.pin_point(2))
 
@@ -800,7 +800,8 @@ def main():
     parser.add_argument('component', help='the top component, e.g. "Kestrel16 Computer"')
     parser.add_argument('-o', '--output', help='project directory (default Build/KiCad/<component>)')
     parser.add_argument('--components', default=None, help='where the netlists are (default Build/Components/)')
-    parser.add_argument('--parts', default=os.path.join(HERE, 'parts.yaml'))
+    parser.add_argument('--parts', default=os.path.join(HERE, 'parts_soic.yaml'), help='the parts file (default '
+                        'parts_soic.yaml)')
     parser.add_argument('--symbols', default=None, help="KiCad's symbol library directory")
     parser.add_argument('--kicad-cli', default=None)
     parser.add_argument('--floorplan', help="floorplan.py's pin map (default: the one in Build/Cards that has "

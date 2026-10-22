@@ -11,11 +11,12 @@ The estimate is RUDY (Rectangular Uniform wire DensitY): each signal net needs a
 half-perimeter of track, spread evenly over that box. Summed over all nets, that is the track each tile of the
 board is asked to carry, in mm of track per mm2. The board can carry signal layers / (track + clearance) of it,
 the signal layers being the copper ones with no plane (2, or 3 after place.py --signal-layers 3), and the track
-and clearance the Default net class's:
-one track per routing pitch on each signal layer, less what the pads block. A through-hole pad blocks both layers,
-so each pad, grown by a clearance and half a track, takes its share of its tiles' supply: under a DIP's 0.1" row of
-pins about two thirds of it. Utilisation is demand over that supply. The nets on planes (GND, and VCC unless it's routed) are left out of
-the demand, since they need no tracks, but their pads still block.
+and clearance the Default net class's: one track per routing pitch on each signal layer, less what the pads block.
+Each pad, grown by a clearance and half a track, takes its share of its tiles' supply: a through-hole pad on every
+signal layer, a surface pad (SOIC, 0805) on its own layer only, so 1 / signal layers of it. A surface pad on a
+plane's net (a chip's VCC or GND pin) also has a via down to the plane, which blocks every layer. Utilisation is
+demand over that supply. The nets on planes (GND, and VCC unless it's routed) are left out of the demand, since they
+need no tracks, but their pads still block.
 
 Utilisation is optimistic on purpose: tracks must turn, change layers and dodge pads, so routers usually start
 failing well before 1.0. Read about 0.5 as busy and 0.7 and up as likely trouble. The overflow score adds up
@@ -32,15 +33,15 @@ import pcbnew
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from kicad_env import NET_CLASSES  # noqa: E402
 
-TRACK, CLEARANCE = NET_CLASSES[0][1:3]  # mm: the Default net class's, which most nets are in
+TRACK, CLEARANCE, VIA = NET_CLASSES[0][1:4]  # mm: the Default net class's, which most nets are in
 BUSY = 0.5                    # utilisation where trouble starts
 MOST_BLOCKED = 0.9            # pads never take more of a tile than this: a track can still squeeze through
 PX = 4                        # SVG pixels per mm
 
 
 def load(path):
-    """(board size, {net: [pad points]}, [(reference, x0, y0, x1, y1)], [pad boxes (x0, y0, x1, y1)], signal
-    layers), in mm from the board's corner."""
+    """(board size, {net: [pad points]}, [(reference, x0, y0, x1, y1)], [pad boxes (x0, y0, x1, y1, through)],
+    signal layers), in mm from the board's corner; a pad is through when it blocks every layer."""
     board = pcbnew.LoadBoard(path)
     box = board.GetBoardEdgesBoundingBox()
     ox, oy = pcbnew.ToMM(box.GetX()), pcbnew.ToMM(box.GetY())
@@ -55,35 +56,43 @@ def load(path):
         bodies.append((footprint.GetReference(), pcbnew.ToMM(body.GetLeft()) - ox, pcbnew.ToMM(body.GetTop()) - oy,
                        pcbnew.ToMM(body.GetRight()) - ox, pcbnew.ToMM(body.GetBottom()) - oy))
         for pad in footprint.Pads():
-            area = pad.GetBoundingBox()
+            area, at, name = pad.GetBoundingBox(), pad.GetPosition(), pad.GetNetname()
+            surface = pad.GetAttribute() == pcbnew.PAD_ATTRIB_SMD
             pads.append((pcbnew.ToMM(area.GetLeft()) - ox, pcbnew.ToMM(area.GetTop()) - oy,
-                         pcbnew.ToMM(area.GetRight()) - ox, pcbnew.ToMM(area.GetBottom()) - oy))
-            name = pad.GetNetname()
+                         pcbnew.ToMM(area.GetRight()) - ox, pcbnew.ToMM(area.GetBottom()) - oy, not surface))
             if not name or name.lstrip('/') in planes:
+                if name and surface:
+                    pads.append(via_box(pcbnew.ToMM(at.x) - ox, pcbnew.ToMM(at.y) - oy))
                 continue
-            at = pad.GetPosition()
             nets.setdefault(name, []).append((pcbnew.ToMM(at.x) - ox, pcbnew.ToMM(at.y) - oy))
     return size, {name: points for name, points in nets.items() if len(points) > 1}, bodies, pads, layers
 
 
-def blockage(size, pads, tile):
-    """The share of each tile's supply its pads take, rows of columns, at most MOST_BLOCKED."""
+def via_box(x, y):
+    """The pad box of a via at (x, y): a plane pin's, which sits beside its pad, so here on it."""
+    return x - VIA / 2, y - VIA / 2, x + VIA / 2, y + VIA / 2, True
+
+
+def blockage(size, pads, tile, signal_layers=2):
+    """The share of each tile's supply its pads take, rows of columns, at most MOST_BLOCKED. A through pad blocks
+    every signal layer, a surface one only its own."""
     cols, rows = max(1, math.ceil(size[0] / tile)), max(1, math.ceil(size[1] / tile))
     blocked = [[0.0] * cols for _ in range(rows)]
     grow = CLEARANCE + TRACK / 2
-    for x0, y0, x1, y1 in pads:
+    for x0, y0, x1, y1, through in pads:
         x0, y0, x1, y1 = x0 - grow, y0 - grow, x1 + grow, y1 + grow
+        share = 1 if through else 1 / signal_layers
         for row in range(max(0, int(y0 // tile)), min(rows - 1, int(y1 // tile)) + 1):
             dy = min(y1, (row + 1) * tile) - max(y0, row * tile)
             for col in range(max(0, int(x0 // tile)), min(cols - 1, int(x1 // tile)) + 1):
                 dx = min(x1, (col + 1) * tile) - max(x0, col * tile)
                 if dx > 0 and dy > 0:
-                    blocked[row][col] += dx * dy / (tile * tile)
+                    blocked[row][col] += share * dx * dy / (tile * tile)
     return [[min(MOST_BLOCKED, value) for value in row] for row in blocked]
 
 
 def rudy(size, nets, tile, pads=(), signal_layers=2):
-    """Utilisation per tile, rows of columns; pads are boxes (x0, y0, x1, y1) that block both layers."""
+    """Utilisation per tile, rows of columns; pads are boxes (x0, y0, x1, y1, through), as blockage takes them."""
     cols, rows = max(1, math.ceil(size[0] / tile)), max(1, math.ceil(size[1] / tile))
     demand = [[0.0] * cols for _ in range(rows)]
     for points in nets.values():
@@ -103,7 +112,7 @@ def rudy(size, nets, tile, pads=(), signal_layers=2):
                 if dx > 0 and dy > 0:
                     demand[row][col] += density * dx * dy / (tile * tile)
     supply = signal_layers / (TRACK + CLEARANCE)
-    blocked = blockage(size, pads, tile)
+    blocked = blockage(size, pads, tile, signal_layers)
     return [[value / (supply * (1 - b)) for value, b in zip(row, blocks)] for row, blocks in zip(demand, blocked)]
 
 

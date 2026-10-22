@@ -1,4 +1,5 @@
-# How each simulator primitive becomes a real chip on a KiCad schematic. Read by Tools/eda/kicad.py.
+# How each simulator primitive becomes a real chip on a KiCad schematic, in surface-mount packages (SOIC, 0805). Read by Tools/eda/kicad.py; the
+# GUI's Parts setting (build.py's 'parts') picks which parts_*.yaml a build uses.
 #
 # The netlists in Components/ stay purely logical; everything physical lives here. For each primitive kind:
 #   symbol     KiCad library symbol, as Library:Name. The drawing only; the part number goes in value.
@@ -16,7 +17,7 @@
 And:
   symbol: 74xx:74LS08
   value: 74HC08
-  footprint: Package_DIP:DIP-14_W7.62mm
+  footprint: Package_SO:SOIC-14_3.9x8.7mm_P1.27mm
   pins: {A: [1, 4, 9, 12], B: [2, 5, 10, 13], Y: [3, 6, 8, 11]}
   power: {VCC: 14, GND: 7}
   unused: {A: GND, B: GND}
@@ -24,7 +25,7 @@ And:
 Or:
   symbol: 74xx:74LS32
   value: 74HC32
-  footprint: Package_DIP:DIP-14_W7.62mm
+  footprint: Package_SO:SOIC-14_3.9x8.7mm_P1.27mm
   pins: {A: [1, 4, 9, 12], B: [2, 5, 10, 13], Y: [3, 6, 8, 11]}
   power: {VCC: 14, GND: 7}
   unused: {A: GND, B: GND}
@@ -32,7 +33,7 @@ Or:
 Nand:
   symbol: 74xx:74LS00
   value: 74HC00
-  footprint: Package_DIP:DIP-14_W7.62mm
+  footprint: Package_SO:SOIC-14_3.9x8.7mm_P1.27mm
   pins: {A: [1, 4, 9, 12], B: [2, 5, 10, 13], Y: [3, 6, 8, 11]}
   power: {VCC: 14, GND: 7}
   unused: {A: GND, B: GND}
@@ -40,7 +41,7 @@ Nand:
 Nor:
   symbol: 74xx:74LS02
   value: 74HC02
-  footprint: Package_DIP:DIP-14_W7.62mm
+  footprint: Package_SO:SOIC-14_3.9x8.7mm_P1.27mm
   pins: {A: [2, 5, 8, 11], B: [3, 6, 9, 12], Y: [1, 4, 10, 13]}
   power: {VCC: 14, GND: 7}
   unused: {A: GND, B: GND}
@@ -48,7 +49,7 @@ Nor:
 Xor:
   symbol: 74xx:74LS86
   value: 74HC86
-  footprint: Package_DIP:DIP-14_W7.62mm
+  footprint: Package_SO:SOIC-14_3.9x8.7mm_P1.27mm
   pins: {A: [1, 4, 9, 12], B: [2, 5, 10, 13], Y: [3, 6, 8, 11]}
   power: {VCC: 14, GND: 7}
   unused: {A: GND, B: GND}
@@ -56,7 +57,7 @@ Xor:
 Not:
   symbol: 74xx:74LS04
   value: 74HC04
-  footprint: Package_DIP:DIP-14_W7.62mm
+  footprint: Package_SO:SOIC-14_3.9x8.7mm_P1.27mm
   pins: {A: [1, 3, 5, 9, 11, 13], Y: [2, 4, 6, 8, 10, 12]}
   power: {VCC: 14, GND: 7}
   unused: {A: GND}
@@ -64,7 +65,7 @@ Not:
 FlipFlop:
   symbol: 74xx:74LS74
   value: 74HC74
-  footprint: Package_DIP:DIP-14_W7.62mm
+  footprint: Package_SO:SOIC-14_3.9x8.7mm_P1.27mm
   pins: {D: [2, 12], CLK: [3, 11], Q: [5, 9], /Q: [6, 8]}
   tie: {VCC: [4, 1, 10, 13]}      # /S and /R, both units
   power: {VCC: 14, GND: 7}
@@ -73,7 +74,7 @@ FlipFlop:
 TriState:
   symbol: 74xx:74LS125
   value: 74HC125
-  footprint: Package_DIP:DIP-14_W7.62mm
+  footprint: Package_SO:SOIC-14_3.9x8.7mm_P1.27mm
   pins: {A: [2, 5, 9, 12], /OE: [1, 4, 10, 13], Y: [3, 6, 8, 11]}
   power: {VCC: 14, GND: 7}
   unused: {A: GND, /OE: VCC}      # disabled
@@ -89,8 +90,8 @@ ROM:
 
 RAM:
   symbol: Memory_RAM:KM62256CLP
-  value: 62256                    # 32K x 8 SRAM
-  footprint: Package_DIP:DIP-28_W15.24mm
+  value: AS6C62256-55SIN          # 32K x 8 SRAM, SOP-28
+  footprint: Package_SO:SOIC-28W_7.5x17.9mm_P1.27mm
   address: [10, 9, 8, 7, 6, 5, 4, 3, 25, 24, 21, 23, 2, 26, 1]
   data: [11, 12, 13, 15, 16, 17, 18, 19]
   pins: {/CE: 20, /OE: 22, /WE: 27}
@@ -102,6 +103,10 @@ Clock:
   footprint: Oscillator:Oscillator_DIP-14
   pins: {clk: 8}
   power: {VCC: 14, GND: 7}
+
+.capacitors:                      # the caps kicad.py adds, not a component: one beside each chip, one per card
+  decoupling: {symbol: Device:C, value: 100nF, footprint: Capacitor_SMD:C_0805_2012Metric}
+  bulk: {symbol: Device:C, value: 10uF, footprint: Capacitor_SMD:C_0805_2012Metric}
 
 Terminal:                         # stands in for a UART; a header for now
   symbol: Connector_Generic:Conn_01x13
@@ -120,42 +125,42 @@ Terminal:                         # stands in for a UART; a header for now
   hc138: &hc138
     symbol: 74xx:74LS138
     value: 74HC138
-    footprint: Package_DIP:DIP-16_W7.62mm
+    footprint: Package_SO:SOIC-16_3.9x9.9mm_P1.27mm
     power: {VCC: 16, GND: 8}
   hc157: &hc157
     symbol: 74xx:74LS157
     value: 74HC157
-    footprint: Package_DIP:DIP-16_W7.62mm
+    footprint: Package_SO:SOIC-16_3.9x9.9mm_P1.27mm
     power: {VCC: 16, GND: 8}
   hc153: &hc153
     symbol: 74xx:74LS153
     value: 74HC153
-    footprint: Package_DIP:DIP-16_W7.62mm
+    footprint: Package_SO:SOIC-16_3.9x9.9mm_P1.27mm
     power: {VCC: 16, GND: 8}
   hc541: &hc541
     symbol: 74xx:74LS541
     value: 74HC541
-    footprint: Package_DIP:DIP-20_W7.62mm
+    footprint: Package_SO:SOIC-20W_7.5x12.8mm_P1.27mm
     power: {VCC: 20, GND: 10}
   hc169: &hc169
     symbol: 74xx:74LS169
     value: 74HC169
-    footprint: Package_DIP:DIP-16_W7.62mm
+    footprint: Package_SO:SOIC-16_3.9x9.9mm_P1.27mm
     power: {VCC: 16, GND: 8}
   hc688: &hc688
     symbol: 74xx:74LS688
     value: 74HC688
-    footprint: Package_DIP:DIP-20_W7.62mm
+    footprint: Package_SO:SOIC-20W_7.5x12.8mm_P1.27mm
     power: {VCC: 20, GND: 10}
   hc30: &hc30
     symbol: 74xx:74LS30
     value: 74HC30
-    footprint: Package_DIP:DIP-14_W7.62mm
+    footprint: Package_SO:SOIC-14_3.9x8.7mm_P1.27mm
     power: {VCC: 14, GND: 7}
   hc377: &hc377
     symbol: 74xx:74LS377
     value: 74HC377
-    footprint: Package_DIP:DIP-20_W7.62mm
+    footprint: Package_SO:SOIC-20W_7.5x12.8mm_P1.27mm
     power: {VCC: 20, GND: 10}
 
 Decoder 3to8:                     # /Yn low when A = n and E is 1

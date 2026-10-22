@@ -35,15 +35,15 @@ import pcbnew
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sexpr  # noqa: E402
-from congestion import BUSY, rudy  # noqa: E402
+from congestion import BUSY, rudy, via_box  # noqa: E402
 from kicad_env import POWER, fill_zones, find_kicad, kicad_cli, net_name  # noqa: E402
 from sexpr import find, find_all  # noqa: E402
 
 EDGE = 5.0       # mm from the board edge to the first slot or header
 CAP_GAP = 2.5    # mm from a VCC pad to its cap
-CHIP_ANGLE = 90  # locked rotation: every DIP lies on its side, pin 1 bottom left
-UPRIGHT = 0      # with --vertical: every DIP stands up, pin 1 top left
-PAD = 1.6        # mm, a DIP or connector pad, for congestion's blockage
+CHIP_ANGLE = 90  # locked rotation: every chip lies on its side, pin 1 bottom left
+UPRIGHT = 0      # with --vertical: every chip stands up, pin 1 top left
+PAD = 1.6        # mm, a template pad (the backplane connector's, through hole), for congestion's blockage
 GROW_STEP = 0.25  # --inflate grows a congested chip's gap by this much of itself each round
 MOST_GROWN = 1.5  # up to this many times its gap
 LEAST_GROWN = 0.75  # and a quiet chip's gap across it shrinks to no less than this, to pay for it
@@ -110,17 +110,21 @@ def block(names, depth=3):
 
 
 def pad_offsets(footprint, angle):
-    """Pad number -> offset (mm) from the footprint's body centre, rotated by angle, plus the body size."""
+    """Pad number -> offset (mm) from the footprint's body centre, rotated by angle, plus the body size, the shift
+    from body centre to footprint origin and pad number -> (width, height, through) in mm, through being a pad that
+    blocks every layer (not a surface one)."""
     footprint.SetOrientationDegrees(angle)
     footprint.SetPosition(pcbnew.VECTOR2I(0, 0))
     box = footprint.GetBoundingBox(False)
     centre = box.GetCenter()
-    offsets = {}
+    offsets, shapes = {}, {}
     for pad in footprint.Pads():
-        position = pad.GetPosition()
+        position, area = pad.GetPosition(), pad.GetBoundingBox()
         offsets.setdefault(pad.GetNumber(), (pcbnew.ToMM(position.x - centre.x), pcbnew.ToMM(position.y - centre.y)))
+        shapes.setdefault(pad.GetNumber(), (pcbnew.ToMM(area.GetWidth()), pcbnew.ToMM(area.GetHeight()),
+                                            pad.GetAttribute() != pcbnew.PAD_ATTRIB_SMD))
     return offsets, (pcbnew.ToMM(box.GetWidth()), pcbnew.ToMM(box.GetHeight())), \
-        (pcbnew.ToMM(-centre.x), pcbnew.ToMM(-centre.y))
+        (pcbnew.ToMM(-centre.x), pcbnew.ToMM(-centre.y)), shapes
 
 
 # ---------------------------------------------------------------------------
@@ -352,7 +356,7 @@ class Board:
         footprint.SetValue(value)
         footprint.SetPath(pcbnew.KIID_PATH(path))
         footprint.SetOrientationDegrees(angle)
-        _, _, shift = pad_offsets(footprint, angle)
+        _, _, shift, _ = pad_offsets(footprint, angle)
         x, y = centre[0] + shift[0] + self.origin[0], centre[1] + shift[1] + self.origin[1]
         footprint.SetPosition(pcbnew.VECTOR2I(mm(x), mm(y)))
         for pad in footprint.Pads():
@@ -543,20 +547,29 @@ def centring(chips, region, obstacles):
 Layout = namedtuple('Layout', 'width height fixed fixed_at placer results slot_of')  # one round's placements
 
 
-def congestion_of(design, chips, offsets, layout, signal_layers, tile=2.54):
+def congestion_of(design, chips, offsets, shapes, layout, signal_layers, tile=2.54):
     """congestion.py's estimate of a layout's best placement, pads blocking, without writing a board:
-    (overflow, peak, {chip: the 90th percentile utilisation over its slot})."""
+    (overflow, peak, {chip: the 90th percentile utilisation over its slot}). shapes: reference -> pad -> (width,
+    height, through), as pad_offsets gives them; a pad with none, the template's, is a PAD square through hole."""
     placer, (_, slots, shift) = layout.placer, layout.results[0]
     at = dict(layout.fixed)
     for chip, slot in zip(chips, slots):
         x, y = (c + d for c, d in zip(placer.centre(slot), shift))
         at.update({(chip, pad): (x + dx, y + dy) for pad, (dx, dy) in offsets[chip].items()})
-    nets = {}
+    def shape(pin):
+        return shapes.get(pin[0], {}).get(pin[1], (PAD, PAD, True))
+
+    nets, pads = {}, []
     for net, pins in design.nets.items():
         points = [at[pin] for pin in pins if pin in at]
-        if net.lstrip('/') not in POWER[:4 - signal_layers] and len(points) > 1:  # VCC needs tracks without its plane
-            nets[net] = points
-    pads = [(x - PAD / 2, y - PAD / 2, x + PAD / 2, y + PAD / 2) for x, y in at.values()]
+        if net.lstrip('/') not in POWER[:4 - signal_layers]:  # VCC needs tracks without its plane
+            if len(points) > 1:
+                nets[net] = points
+        else:  # each surface pad on a plane has a via down to it
+            pads += [via_box(*at[pin]) for pin in pins if pin in at and not shape(pin)[2]]
+    for pin, (x, y) in at.items():
+        w, h, through = shape(pin)
+        pads.append((x - w / 2, y - h / 2, x + w / 2, y + h / 2, through))
     grid = rudy((layout.width, layout.height), nets, tile, pads, signal_layers)
     values = [u for row in grid for u in row]
     overflow = sum((u - BUSY) ** 2 for u in values if u > BUSY) * tile * tile
@@ -608,10 +621,10 @@ def place_project(directory, gap=(7.0, 4.0), density=1.4, runs=6, moves=None, se
         print('  warning: %s matched nothing on the template, so it goes in the strip along the bottom edge'
               % ', '.join(kinds['header']))
 
-    offsets, sizes = {}, {}
+    offsets, sizes, shapes = {}, {}, {}
     for reference in design.parts:
         angle = 90 if design.kind(reference) == 'header' else chip_angle
-        offsets[reference], sizes[reference], _ = pad_offsets(design.load(reference), angle)
+        offsets[reference], sizes[reference], _, shapes[reference] = pad_offsets(design.load(reference), angle)
     header_height = max((sizes[h][1] for h in kinds['header'] + kinds['bulk']), default=0)
     strip = header_height + EDGE  # the header and bulk cap row along the bottom edge
     signal_nets = [pins for net, pins in design.nets.items() if net.lstrip('/') not in POWER]
@@ -722,7 +735,7 @@ def place_project(directory, gap=(7.0, 4.0), density=1.4, runs=6, moves=None, se
 
     layout = lay(slot_sizes(grown))
     if inflate:
-        score = congestion_of(design, chips, offsets, layout, signal_layers)
+        score = congestion_of(design, chips, offsets, shapes, layout, signal_layers)
         print('  congestion: overflow %.0f, peak %.2f' % score[:2])
         for step in range(inflate):
             # Chips of one footprint and gap change together, by their median heat, so they keep sharing slots: on a
@@ -759,7 +772,7 @@ def place_project(directory, gap=(7.0, 4.0), density=1.4, runs=6, moves=None, se
                 print('  keeping the placement before')
                 break
             grown = trial
-            new = congestion_of(design, chips, offsets, attempt, signal_layers)
+            new = congestion_of(design, chips, offsets, shapes, attempt, signal_layers)
             print('  congestion: overflow %.0f, peak %.2f (was %.0f, %.2f)' % (new[:2] + score[:2]))
             if new[0] >= score[0]:
                 print('  no better: keeping the placement before')

@@ -5,6 +5,9 @@
     python Tools/eda/build.py Registers --until Route  # what one card's route needs, then the route (with --run)
     python Tools/eda/build.py ALU --stage Layout --run # one stage, run even if up to date, after what it needs
 
+The parts file (parts_soic.yaml or parts_dip.yaml, under Tools/eda) is a setting for the whole computer: it says
+which chips and packages the cards are built from, and changing it makes every Layout stale.
+
 Generate, Cards and Floorplan run once for the computer; Layout, Congestion and Route run on each card. A stage is up
 to date when it last succeeded after everything it needs, and on the same command line, so changing a setting makes
 it stale. Each success leaves a stamp, Build/Stamps/<stage>/<target>.json, with its command line and time. Settings
@@ -23,6 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, '..', '..'))
 TOOLS = os.path.join(ROOT, 'Tools')
 SETTINGS = os.path.join(ROOT, 'Build', 'eda_gui.json')
+PARTS = 'parts_soic.yaml'  # the parts file, under Tools/eda, unless the settings pick another
 STAMPS = os.path.join(ROOT, 'Build', 'Stamps')
 TEMPLATE = os.path.join(HERE, 'templates', '6U_Eurocard', '6U_Eurocard.kicad_pcb')
 TOP = 'Kestrel16 Computer'
@@ -66,8 +70,7 @@ STAGES = [
         ('--show', 'Widest nets to list', int, 15)], needs=['Generate']),
     Stage('Floorplan', 'floorplan.py', 'python', None, [
         ('--order', 'Slot order, comma separated (blank: fewest pins)', str, '')], needs=['Cards']),
-    Stage('Layout', 'layout.py', 'python', 'component', PLACE, needs=['Floorplan'], card=True,
-          inputs=[os.path.join(HERE, 'parts.yaml')]),
+    Stage('Layout', 'layout.py', 'python', 'component', PLACE, needs=['Floorplan'], card=True),
     Stage('Congestion', 'congestion.py', 'kicad', 'project', [('--tile', 'Tile size, mm', str, '2.54')],
           needs=['Layout'], card=True),
     Stage('Route', 'route.py', 'kicad', 'project', [
@@ -105,6 +108,16 @@ def save_settings(settings):
 
 def option(settings, stage, flag, default):
     return settings.get('stages', {}).get(stage, {}).get(flag, default)
+
+
+def parts_files():
+    """The parts files to pick from, by name."""
+    return sorted(name for name in os.listdir(HERE) if name.startswith('parts_') and name.endswith('.yaml'))
+
+
+def parts_file(settings):
+    """The parts file the settings pick, as a path."""
+    return os.path.join(HERE, settings.get('parts') or PARTS)
 
 
 def kicad_python(settings):
@@ -154,6 +167,8 @@ def commands(stage, target, settings):
                 line.append(flag)
         elif str(value).strip():
             line += [flag, str(value).strip()]
+    if s.script == 'layout.py':
+        line += ['--parts', os.path.basename(parts_file(settings))]
     return [(s.python, line)]
 
 
@@ -164,6 +179,7 @@ def command_lines(stage, target, settings):
     for kind, line in commands(stage, target, settings):
         if BY_NAME[stage].script == 'layout.py':
             line = line + ['--kicad-python', python['kicad']]
+            line[line.index('--parts') + 1] = parts_file(settings)
         lines.append([python[kind]] + line)
     return lines
 
@@ -192,7 +208,7 @@ def stamp(stage, target, settings):
 
 def inputs(stage, settings):
     s = BY_NAME[stage]
-    files = list(s.inputs)
+    files = list(s.inputs) + ([parts_file(settings)] if s.script == 'layout.py' else [])
     files += [option(settings, stage, flag, default) for flag, _, kind, default in s.options if kind == 'file']
     return [f for f in files if f and os.path.isfile(f)]
 

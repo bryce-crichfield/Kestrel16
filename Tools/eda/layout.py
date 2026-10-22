@@ -70,12 +70,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('component', help='the card, e.g. "Card Registers"')
     parser.add_argument('--kicad-python', help="KiCad's Python, which place.py needs (default: found)")
+    parser.add_argument('--parts', help="kicad.py's parts file (default: its own)")
     args, place_options = parser.parse_known_args()
     kicad_python = args.kicad_python or find_kicad('bin/python.exe') or find_kicad('bin/python3')
     if not kicad_python:
         raise SystemExit("can't find KiCad's Python; pass --kicad-python")
     component, project = args.component, os.path.join(KICAD, args.component)
-    schematic = [sys.executable, os.path.join(HERE, 'kicad.py'), component]
+    schematic = [sys.executable, os.path.join(HERE, 'kicad.py'), component] + (
+        ['--parts', args.parts] if args.parts else [])
     if not any(option == '--template' or option.startswith('--template=') for option in place_options):
         place_options += ['--template', TEMPLATE]
     place = [kicad_python, os.path.join(HERE, 'place.py'), project] + place_options

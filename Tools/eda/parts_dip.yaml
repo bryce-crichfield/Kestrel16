@@ -1,0 +1,212 @@
+# How each simulator primitive becomes a real chip on a KiCad schematic, in through-hole packages (DIP). Read by Tools/eda/kicad.py; the
+# GUI's Parts setting (build.py's 'parts') picks which parts_*.yaml a build uses.
+#
+# The netlists in Components/ stay purely logical; everything physical lives here. For each primitive kind:
+#   symbol     KiCad library symbol, as Library:Name. The drawing only; the part number goes in value.
+#   value      the part to buy.
+#   footprint  KiCad footprint, carried into the schematic for layout later.
+#   pins       logical pin -> hardware pin number, a list with one entry per unit for multi-gate chips.
+#              Gates of one kind in a component are packed into shared packages, unit by unit.
+#   tie        hardware pins wired to VCC or GND in every unit, used or not (a 74HC74's /S and /R).
+#   unused     what each logical input of a leftover unit is tied to. Leftover outputs get no-connect flags.
+#   power      supply pins; they sit on the chip's power unit, or on unit 1 for single-unit chips.
+# Memories (ROM, RAM) list address and data pins in order instead: the netlist's Nth address or data pin
+# goes to the Nth hardware pin, whatever its name. Address pins the netlist doesn't use are tied to GND.
+# The simulator reads an unconnected input as 0, so the schematic ties every unconnected input to GND.
+
+And:
+  symbol: 74xx:74LS08
+  value: 74HC08
+  footprint: Package_DIP:DIP-14_W7.62mm
+  pins: {A: [1, 4, 9, 12], B: [2, 5, 10, 13], Y: [3, 6, 8, 11]}
+  power: {VCC: 14, GND: 7}
+  unused: {A: GND, B: GND}
+
+Or:
+  symbol: 74xx:74LS32
+  value: 74HC32
+  footprint: Package_DIP:DIP-14_W7.62mm
+  pins: {A: [1, 4, 9, 12], B: [2, 5, 10, 13], Y: [3, 6, 8, 11]}
+  power: {VCC: 14, GND: 7}
+  unused: {A: GND, B: GND}
+
+Nand:
+  symbol: 74xx:74LS00
+  value: 74HC00
+  footprint: Package_DIP:DIP-14_W7.62mm
+  pins: {A: [1, 4, 9, 12], B: [2, 5, 10, 13], Y: [3, 6, 8, 11]}
+  power: {VCC: 14, GND: 7}
+  unused: {A: GND, B: GND}
+
+Nor:
+  symbol: 74xx:74LS02
+  value: 74HC02
+  footprint: Package_DIP:DIP-14_W7.62mm
+  pins: {A: [2, 5, 8, 11], B: [3, 6, 9, 12], Y: [1, 4, 10, 13]}
+  power: {VCC: 14, GND: 7}
+  unused: {A: GND, B: GND}
+
+Xor:
+  symbol: 74xx:74LS86
+  value: 74HC86
+  footprint: Package_DIP:DIP-14_W7.62mm
+  pins: {A: [1, 4, 9, 12], B: [2, 5, 10, 13], Y: [3, 6, 8, 11]}
+  power: {VCC: 14, GND: 7}
+  unused: {A: GND, B: GND}
+
+Not:
+  symbol: 74xx:74LS04
+  value: 74HC04
+  footprint: Package_DIP:DIP-14_W7.62mm
+  pins: {A: [1, 3, 5, 9, 11, 13], Y: [2, 4, 6, 8, 10, 12]}
+  power: {VCC: 14, GND: 7}
+  unused: {A: GND}
+
+FlipFlop:
+  symbol: 74xx:74LS74
+  value: 74HC74
+  footprint: Package_DIP:DIP-14_W7.62mm
+  pins: {D: [2, 12], CLK: [3, 11], Q: [5, 9], /Q: [6, 8]}
+  tie: {VCC: [4, 1, 10, 13]}      # /S and /R, both units
+  power: {VCC: 14, GND: 7}
+  unused: {D: GND, CLK: GND}
+
+TriState:
+  symbol: 74xx:74LS125
+  value: 74HC125
+  footprint: Package_DIP:DIP-14_W7.62mm
+  pins: {A: [2, 5, 9, 12], /OE: [1, 4, 10, 13], Y: [3, 6, 8, 11]}
+  power: {VCC: 14, GND: 7}
+  unused: {A: GND, /OE: VCC}      # disabled
+
+ROM:
+  symbol: Memory_EPROM:27C512
+  value: W27C512                  # 64K x 8, electrically erasable
+  footprint: Package_DIP:DIP-28_W15.24mm
+  address: [10, 9, 8, 7, 6, 5, 4, 3, 25, 24, 21, 23, 2, 26, 27, 1]
+  data: [11, 12, 13, 15, 16, 17, 18, 19]
+  pins: {/CE: 20, /OE: 22}
+  power: {VCC: 28, GND: 14}
+
+RAM:
+  symbol: Memory_RAM:KM62256CLP
+  value: 62256                    # 32K x 8 SRAM
+  footprint: Package_DIP:DIP-28_W15.24mm
+  address: [10, 9, 8, 7, 6, 5, 4, 3, 25, 24, 21, 23, 2, 26, 1]
+  data: [11, 12, 13, 15, 16, 17, 18, 19]
+  pins: {/CE: 20, /OE: 22, /WE: 27}
+  power: {VCC: 28, GND: 14}
+
+Clock:
+  symbol: Oscillator:ACO-xxxMHz
+  value: ACO-1MHz
+  footprint: Oscillator:Oscillator_DIP-14
+  pins: {clk: 8}
+  power: {VCC: 14, GND: 7}
+
+.capacitors:                      # the caps kicad.py adds, not a component: one beside each chip, one per card
+  decoupling: {symbol: Device:C, value: 100nF, footprint: Capacitor_THT:C_Disc_D3.0mm_W1.6mm_P2.50mm}
+  bulk: {symbol: Device:C_Polarized, value: 10uF, footprint: Capacitor_THT:CP_Radial_D5.0mm_P2.00mm}
+
+Terminal:                         # stands in for a UART; a header for now
+  symbol: Connector_Generic:Conn_01x13
+  value: Terminal
+  footprint: Connector_PinHeader_2.54mm:PinHeader_1x13_P2.54mm_Vertical
+  pins: {RS: 1, /CE: 2, /OE: 3, /WE: 4, D0: 5, D1: 6, D2: 7, D3: 8, D4: 9, D5: 10, D6: 11, D7: 12, IRQ: 13}
+
+# ---------------------------------------------------------------------------
+# Components placed as real chips: the chip-level parts, each exactly one chip. A component named here is not drawn from its gates: kicad.py places the chips
+# listed under chips instead, and the round-trip check treats it as one part. The simulator still runs its gates,
+# so each mapping must behave exactly like the component; check it against the datasheet when adding one.
+# Each chip's pins map a name to a hardware pin, or a list of them: a port bit of the component (D0, /OE, ...)
+# or, starting with '.', a net between the component's own chips. Every port bit must land on some pin.
+
+.chips:                           # the chips the entries below use; this key is not a component
+  hc138: &hc138
+    symbol: 74xx:74LS138
+    value: 74HC138
+    footprint: Package_DIP:DIP-16_W7.62mm
+    power: {VCC: 16, GND: 8}
+  hc157: &hc157
+    symbol: 74xx:74LS157
+    value: 74HC157
+    footprint: Package_DIP:DIP-16_W7.62mm
+    power: {VCC: 16, GND: 8}
+  hc153: &hc153
+    symbol: 74xx:74LS153
+    value: 74HC153
+    footprint: Package_DIP:DIP-16_W7.62mm
+    power: {VCC: 16, GND: 8}
+  hc541: &hc541
+    symbol: 74xx:74LS541
+    value: 74HC541
+    footprint: Package_DIP:DIP-20_W7.62mm
+    power: {VCC: 20, GND: 10}
+  hc169: &hc169
+    symbol: 74xx:74LS169
+    value: 74HC169
+    footprint: Package_DIP:DIP-16_W7.62mm
+    power: {VCC: 16, GND: 8}
+  hc688: &hc688
+    symbol: 74xx:74LS688
+    value: 74HC688
+    footprint: Package_DIP:DIP-20_W7.62mm
+    power: {VCC: 20, GND: 10}
+  hc30: &hc30
+    symbol: 74xx:74LS30
+    value: 74HC30
+    footprint: Package_DIP:DIP-14_W7.62mm
+    power: {VCC: 14, GND: 7}
+  hc377: &hc377
+    symbol: 74xx:74LS377
+    value: 74HC377
+    footprint: Package_DIP:DIP-20_W7.62mm
+    power: {VCC: 20, GND: 10}
+
+Decoder 3to8:                     # /Yn low when A = n and E is 1
+  chips:
+    - <<: *hc138
+      pins: {A0: 1, A1: 2, A2: 3, E: 6,
+             /Y0: 15, /Y1: 14, /Y2: 13, /Y3: 12, /Y4: 11, /Y5: 10, /Y6: 9, /Y7: 7}
+      tie: {GND: [4, 5]}          # /E1 and /E2 enabled
+
+Mux 2x4:                          # Yn = S ? Bn : An
+  chips:
+    - <<: *hc157
+      pins: {S: 1, A0: 2, B0: 3, Y0: 4, A1: 5, B1: 6, Y1: 7, A2: 11, B2: 10, Y2: 9, A3: 14, B3: 13, Y3: 12}
+      tie: {GND: [15]}            # /E enabled
+
+Bus Driver 8:                     # Y = A while /OE is 0
+  chips:
+    - <<: *hc541
+      pins: {/OE: [1, 19], A0: 2, A1: 3, A2: 4, A3: 5, A4: 6, A5: 7, A6: 8, A7: 9,
+             Y0: 18, Y1: 17, Y2: 16, Y3: 15, Y4: 14, Y5: 13, Y6: 12, Y7: 11}
+
+Register 8:                       # loads D on CLK's rising edge while /E is 0
+  chips:
+    - <<: *hc377
+      pins: {/E: 1, CLK: 11, D0: 3, D1: 4, D2: 7, D3: 8, D4: 13, D5: 14, D6: 17, D7: 18,
+             Q0: 2, Q1: 5, Q2: 6, Q3: 9, Q4: 12, Q5: 15, Q6: 16, Q7: 19}
+
+Counter 4:                        # synchronous load and count; /RCO chains into the next one's /ENT
+  chips:
+    - <<: *hc169
+      pins: {UP: 1, CLK: 2, D0: 3, D1: 4, D2: 5, D3: 6, /ENP: 7, /LOAD: 9, /ENT: 10,
+             Q0: 14, Q1: 13, Q2: 12, Q3: 11, /RCO: 15}
+
+Compare 8:                        # /EQ low when P = Q and /G is low
+  chips:
+    - <<: *hc688
+      pins: {/G: 1, P0: 2, Q0: 3, P1: 4, Q1: 5, P2: 6, Q2: 7, P3: 8, Q3: 9,
+             P4: 11, Q4: 12, P5: 13, Q5: 14, P6: 15, Q6: 16, P7: 17, Q7: 18, /EQ: 19}
+
+Nand 8:                           # Y low when every A is high
+  chips:
+    - <<: *hc30
+      pins: {A0: 1, A1: 2, A2: 3, A3: 4, A4: 5, A5: 6, A6: 11, A7: 12, Y: 8}
+
+Mux 4x2:                          # YA = A<S>, YB = B<S>
+  chips:
+    - <<: *hc153
+      pins: {S0: 14, S1: 2, A0: 6, A1: 5, A2: 4, A3: 3, YA: 7, B0: 10, B1: 11, B2: 12, B3: 13, YB: 9}
+      tie: {GND: [1, 15]}         # both enables on
