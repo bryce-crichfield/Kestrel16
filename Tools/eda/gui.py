@@ -1,139 +1,130 @@
-"""A small window for running the EDA tools on a component, one stage at a time or all in a row.
+"""A window on the EDA pipeline: every stage of every card, whether it's up to date, and a click to bring it there.
 
   py Tools/eda/gui.py
 
-Pick a component, then run a stage. Each stage's Settings button sets its command-line options; they are saved in
-Build/eda_gui.json. kicad.py and cards.py run under this Python; template.py, place.py and route.py under KiCad's,
-which is set in the window too. Output streams into the log, and Stop kills the running tool.
+The grid has a row for the computer (Generate, Cards, Floorplan) and one per card (Layout, Congestion, Route). A
+cell is green when up to date, amber when stale (something it needs changed since, or its settings did), grey when
+it hasn't run and red when it failed; hover it to see why. Clicking a cell runs it, after whatever it needs that
+isn't up to date; Build all runs everything that isn't. Each column's Settings button sets that stage's options.
+The stages, settings and stamps are build.py's, so the window and the command line agree on what's stale.
 """
-import json
 import os
 import queue
 import subprocess
-import sys
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.normpath(os.path.join(HERE, '..', '..'))
-COMPONENTS = os.path.join(ROOT, 'Build', 'Components')
-SETTINGS = os.path.join(ROOT, 'Build', 'eda_gui.json')
-TEMPLATE = os.path.join(HERE, 'templates', '6U_Eurocard', '6U_Eurocard.kicad_pcb')
+import build
 
-
-def kicad_python():
-    sys.path.insert(0, HERE)
-    from kicad_env import find_kicad
-    return find_kicad('bin/python.exe') or find_kicad('bin/python3') or 'python'
-
-
-# A stage: its label, the script, which Python runs it, what it takes as its argument (the component's name, its
-# KiCad project directory, or nothing), and its options as (flag, label, kind, default). A bool is a plain flag.
-STAGES = [
-    ('Generate design', None, 'python', None, []),
-    ('Schematic', 'kicad.py', 'python', 'component', [('--check', 'Round trip and ERC (needs kicad-cli)', bool, True)]),
-    ('Cards report', 'cards.py', 'python', 'component', [
-        ('--reserved', 'Pins kept for power', int, 16),
-        ('--show', 'Widest nets to list', int, 15)]),
-    ('Eurocard template', 'template.py', 'kicad', None, []),
-    ('Place', 'place.py', 'kicad', 'project', [
-        ('--template', 'Template board (blank: size to fit)', 'file', TEMPLATE),
-        ('--gap', 'Slot room past each chip, along x across, mm', str, '7x4'),
-        ('--density', 'Slots per chip (no template)', str, ''),
-        ('--packing', 'Packing: auto, rows or free', str, 'auto'),
-        ('--vertical', 'Chips stand up (rows become columns)', bool, False),
-        ('--label', "Card label (blank: project name; none: no label)", str, ''),
-        ('--label-corner', 'Label corner: auto, top-left, top-right, bottom-left, bottom-right', str, 'auto'),
-        ('--label-angle', 'Label rotation, degrees', str, '0'),
-        ('--label-size', 'Label text height, mm', str, '3'),
-        ('--back-labels', 'Chip labels on the back too', bool, False),
-        ('--runs', 'Anneals', int, 6),
-        ('--candidates', 'Placements kept for routing', int, 5),
-        ('--moves', 'Moves per anneal (blank: 4000 per chip)', str, ''),
-        ('--seed', 'Seed', int, 1)]),
-    ('Route', 'route.py', 'kicad', 'project', [
-        ('--candidates', 'Candidates to route, best first', int, 1),
-        ('--passes', 'Routing passes per candidate', int, 25),
-        ('--threads', 'Freerouting threads', int, 4),
-        ('--timeout', 'Seconds per candidate', int, 600),
-        ('--java', 'Java 21+ (blank: find it)', 'file', '')]),
-]
-GENERATORS = ['make_registers.py', 'make_alu.py', 'make_cpu.py']  # in order: later ones use earlier parts
-PIPELINE = ['Schematic', 'Place', 'Route']
+COLOURS = {'done': '#9be29b', 'stale': '#f5c66b', 'missing': '#d9d9d9', 'failed': '#f08a8a', 'running': '#8ec5f5',
+           'queued': '#cfe4f7'}
+TEXT = {'done': 'done', 'stale': 'stale', 'missing': 'not run', 'failed': 'failed', 'running': 'running',
+        'queued': 'queued'}
 
 
 class App:
     def __init__(self, root):
         self.root = root
         root.title('Kestrel16 EDA')
-        self.settings = self.load()
-        self.process, self.lines, self.queue = None, queue.Queue(), []
+        self.settings = build.load_settings()
+        self.process, self.lines, self.queue = None, queue.Queue(), []  # queue: [(stage, target, [lines])]
+        self.current, self.failed, self.cells, self.all = None, set(), {}, False
 
         top = ttk.Frame(root, padding=8)
         top.pack(fill='x')
-        ttk.Label(top, text='Component').grid(row=0, column=0, sticky='w')
-        self.component = tk.StringVar(value=self.settings.get('component', 'Register 16'))
-        self.choice = ttk.Combobox(top, textvariable=self.component, width=36)
-        self.choice.grid(row=0, column=1, sticky='we', padx=4)
-        ttk.Button(top, text='Refresh', command=self.refresh).grid(row=0, column=2)
-        ttk.Label(top, text="KiCad's Python").grid(row=1, column=0, sticky='w', pady=(4, 0))
-        self.kicad = tk.StringVar(value=self.settings.get('kicad_python') or kicad_python())
-        ttk.Entry(top, textvariable=self.kicad, width=40).grid(row=1, column=1, sticky='we', padx=4, pady=(4, 0))
-        ttk.Button(top, text='Browse', command=lambda: self.browse(self.kicad)).grid(row=1, column=2, pady=(4, 0))
+        ttk.Label(top, text="KiCad's Python").grid(row=0, column=0, sticky='w')
+        self.kicad = tk.StringVar(value=build.kicad_python(self.settings))
+        ttk.Entry(top, textvariable=self.kicad, width=60).grid(row=0, column=1, sticky='we', padx=4)
+        ttk.Button(top, text='Browse', command=lambda: self.browse(self.kicad)).grid(row=0, column=2)
         top.columnconfigure(1, weight=1)
 
-        stages = ttk.LabelFrame(root, text='Stages', padding=8)
-        stages.pack(fill='x', padx=8)
-        for row, (label, _, _, _, options) in enumerate(STAGES):
-            ttk.Button(stages, text=label, width=20, command=lambda l=label: self.run([l])).grid(row=row, column=0, pady=1)
-            if options:
-                ttk.Button(stages, text='Settings', command=lambda l=label: self.configure(l)).grid(row=row, column=1, padx=4)
-        ttk.Button(stages, text='Schematic, Place, Route', command=lambda: self.run(PIPELINE)).grid(row=0, column=2, padx=12)
-        ttk.Button(stages, text='Open project folder', command=self.open_folder).grid(row=1, column=2, padx=12)
-        self.stop_button = ttk.Button(stages, text='Stop', command=self.stop, state='disabled')
-        self.stop_button.grid(row=2, column=2, padx=12)
+        self.grid = ttk.LabelFrame(root, text='Pipeline', padding=8)
+        self.grid.pack(fill='x', padx=8)
+        buttons = ttk.Frame(root, padding=(8, 6))
+        buttons.pack(fill='x')
+        ttk.Button(buttons, text='Build all', command=self.build_all).pack(side='left')
+        ttk.Button(buttons, text='Refresh', command=self.draw).pack(side='left', padx=6)
+        self.stop_button = ttk.Button(buttons, text='Stop', command=self.stop, state='disabled')
+        self.stop_button.pack(side='left')
 
         self.log = tk.Text(root, height=24, width=110, wrap='none', font=('Consolas', 9))
-        self.log.pack(fill='both', expand=True, padx=8, pady=8)
+        self.log.pack(fill='both', expand=True, padx=8, pady=(0, 8))
         self.status = tk.StringVar(value='ready')
         ttk.Label(root, textvariable=self.status, padding=(8, 0, 8, 6)).pack(anchor='w')
-        self.refresh()
+        self.draw()
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.after(100, self.drain)
 
+    # ------------------------------------------------------------------ the grid
+
+    def draw(self):
+        """Lays the grid out again: cards.py may have found new cards."""
+        for child in self.grid.winfo_children():
+            child.destroy()
+        self.cells = {}
+        for column, stage in enumerate(build.STAGES, start=1):
+            ttk.Label(self.grid, text=stage.name, anchor='center').grid(row=0, column=column, sticky='we', padx=2)
+            if stage.options:
+                ttk.Button(self.grid, text='Settings', width=9,
+                           command=lambda s=stage: self.configure(s)).grid(row=1, column=column, padx=2, pady=(0, 4))
+        rows = [build.COMPUTER] + build.cards()
+        for row, target in enumerate(rows, start=2):
+            ttk.Label(self.grid, text=target).grid(row=row, column=0, sticky='w', padx=(0, 8))
+            for column, stage in enumerate(build.STAGES, start=1):
+                if stage.card == (target == build.COMPUTER):
+                    continue
+                cell = tk.Button(self.grid, width=11, relief='groove',
+                                 command=lambda s=stage.name, t=target: self.run_cell(s, t))
+                cell.grid(row=row, column=column, padx=2, pady=1, sticky='we')
+                cell.bind('<Enter>', lambda _, s=stage.name, t=target: self.explain(s, t))
+                cell.bind('<Leave>', lambda _: self.status.set(self.state_line()))
+                self.cells[(stage.name, target)] = cell
+            if target != build.COMPUTER:
+                ttk.Button(self.grid, text='Open', width=6,
+                           command=lambda t=target: self.open_folder(t)).grid(row=row, column=len(build.STAGES) + 1,
+                                                                              padx=(8, 0))
+        if len(rows) == 1:
+            ttk.Label(self.grid, text='Run Cards to find the cards').grid(row=3, column=0, columnspan=4, sticky='w')
+        self.paint()
+
+    def state(self, stage, target, memo):
+        item = (stage, target)
+        if item == (self.current or (None, None))[:2]:
+            return 'running', 'running now'
+        if any(item == queued[:2] for queued in self.queue):
+            return 'queued', 'waiting its turn'
+        if item in self.failed:
+            return 'failed', 'its last run failed: see the log'
+        return build.status(stage, target, self.settings, memo)
+
+    def paint(self):
+        memo = {}
+        for (stage, target), cell in self.cells.items():
+            state, _ = self.state(stage, target, memo)
+            cell.configure(text=TEXT[state], bg=COLOURS[state], activebackground=COLOURS[state])
+
+    def explain(self, stage, target):
+        self.status.set('%s %s: %s' % (target, stage, self.state(stage, target, {})[1]))
+
+    def state_line(self):
+        return 'running %s %s' % (self.current[1], self.current[0]) if self.current else 'ready'
+
     # ------------------------------------------------------------------ settings
 
-    def load(self):
-        try:
-            with open(SETTINGS, encoding='utf-8') as file:
-                return json.load(file)
-        except (OSError, ValueError):
-            return {}
-
     def save(self):
-        self.settings['component'] = self.component.get()
         self.settings['kicad_python'] = self.kicad.get()
-        try:
-            os.makedirs(os.path.dirname(SETTINGS), exist_ok=True)
-            with open(SETTINGS, 'w', encoding='utf-8') as file:
-                json.dump(self.settings, file, indent=2)
-        except OSError:
-            pass
+        build.save_settings(self.settings)
 
-    def option(self, stage, flag, default):
-        return self.settings.get('stages', {}).get(stage, {}).get(flag, default)
-
-    def configure(self, label):
-        options = next(stage[4] for stage in STAGES if stage[0] == label)
+    def configure(self, stage):
         dialog = tk.Toplevel(self.root)
-        dialog.title('%s settings' % label)
+        dialog.title('%s settings' % stage.name)
         dialog.transient(self.root)
         frame = ttk.Frame(dialog, padding=10)
         frame.pack(fill='both')
         values = {}
-        for row, (flag, text, kind, default) in enumerate(options):
-            value = self.option(label, flag, default)
+        for row, (flag, text, kind, default) in enumerate(stage.options):
+            value = build.option(self.settings, stage.name, flag, default)
             ttk.Label(frame, text=text).grid(row=row, column=0, sticky='w', pady=2)
             if kind is bool:
                 values[flag] = tk.BooleanVar(value=bool(value))
@@ -146,8 +137,8 @@ class App:
                                command=lambda v=values[flag]: self.browse(v)).grid(row=row, column=2)
 
         def ok():
-            stage = self.settings.setdefault('stages', {}).setdefault(label, {})
-            for flag, text, kind, _ in options:
+            chosen = {}
+            for flag, text, kind, _ in stage.options:
                 value = values[flag].get()
                 if kind is int and value.strip():
                     try:
@@ -155,81 +146,79 @@ class App:
                     except ValueError:
                         messagebox.showerror('Settings', '%s must be a whole number' % text, parent=dialog)
                         return
-                stage[flag] = value
+                chosen[flag] = value
+            self.settings.setdefault('stages', {})[stage.name] = chosen
             self.save()
             dialog.destroy()
+            self.paint()  # a changed setting makes the stage stale
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=len(options), column=0, columnspan=3, pady=(8, 0), sticky='e')
+        buttons.grid(row=len(stage.options), column=0, columnspan=3, pady=(8, 0), sticky='e')
         ttk.Button(buttons, text='Defaults', command=lambda: [
-            values[f].set(d if k is bool else str(d)) for f, _, k, d in options]).pack(side='left', padx=4)
+            values[f].set(d if k is bool else str(d)) for f, _, k, d in stage.options]).pack(side='left', padx=4)
         ttk.Button(buttons, text='OK', command=ok).pack(side='left', padx=4)
         ttk.Button(buttons, text='Cancel', command=dialog.destroy).pack(side='left')
         dialog.grab_set()
 
     def browse(self, variable):
         types = [('KiCad board', '*.kicad_pcb'), ('All files', '*.*')] if variable.get().endswith('.kicad_pcb') else []
-        path = filedialog.askopenfilename(initialdir=os.path.dirname(variable.get()) or ROOT, filetypes=types)
+        path = filedialog.askopenfilename(initialdir=os.path.dirname(variable.get()) or build.ROOT, filetypes=types)
         if path:
             variable.set(os.path.normpath(path))  # Tk returns forward slashes
 
-    # ------------------------------------------------------------------ commands
+    # ------------------------------------------------------------------ running
 
-    def refresh(self):
-        names = sorted(name[:-5] for name in os.listdir(COMPONENTS) if name.endswith('.yaml')) \
-            if os.path.isdir(COMPONENTS) else []
-        self.choice['values'] = names
+    def run_cell(self, stage, target):
+        """The stage, even if up to date, after whatever it needs that isn't."""
+        self.start(build.plan(self.settings, [(stage, target)], {(stage, target)}))
 
-    def project(self):
-        return os.path.join(ROOT, 'Build', 'KiCad', self.component.get())
+    def build_all(self):
+        self.start(build.plan(self.settings), everything=True)
 
-    def commands(self, label):
-        """The command lines a stage runs."""
-        _, script, python, argument, options = next(stage for stage in STAGES if stage[0] == label)
-        interpreter = sys.executable if python == 'python' else self.kicad.get()
-        if script is None:
-            return [[sys.executable, os.path.join(ROOT, 'Tools', name)] for name in GENERATORS]
-        line = [interpreter, os.path.join(HERE, script)]
-        if argument == 'component':
-            line.append(self.component.get())
-        elif argument == 'project':
-            line.append(self.project())
-        for flag, _, kind, default in options:
-            value = self.option(label, flag, default)
-            if kind is bool:
-                if value:
-                    line.append(flag)
-            elif str(value).strip():
-                line += [flag, str(value).strip()]
-        return [line]
-
-    def run(self, labels):
-        if self.process:
+    def start(self, items, everything=False):
+        if self.process or self.current:
             return
-        if not self.component.get() and any(label not in ('Generate design', 'Eurocard template') for label in labels):
-            messagebox.showerror('EDA', 'Pick a component first')
-            return
+        self.all = everything
         self.save()
-        self.queue = [line for label in labels for line in self.commands(label)]
+        if not items:
+            self.status.set('everything is up to date')
+            return
+        self.queue = [(stage, target, build.command_lines(stage, target, self.settings)) for stage, target in items]
+        self.failed -= {item[:2] for item in self.queue}
         self.log.delete('1.0', 'end')
         self.next()
 
     def next(self):
-        if not self.queue:
-            self.finish('done')
-            return
-        line = self.queue.pop(0)
+        """The next command line: of the current stage, else the next stage's first."""
+        if self.current and not self.current[2]:  # its last line succeeded
+            stage, target, _ = self.current
+            build.stamp(stage, target, self.settings)
+            self.current = None
+            if stage == 'Cards':  # it finds the cards: show them, and Build all plans again to take them in
+                self.draw()
+                if self.all:
+                    self.queue = [(s, t, build.command_lines(s, t, self.settings))
+                                  for s, t in build.plan(self.settings)]
+        if self.current is None:
+            if not self.queue:
+                self.finish('done')
+                return
+            stage, target, lines = self.queue.pop(0)
+            self.current = (stage, target, list(lines))
+            self.write('== %s: %s\n' % (target, stage))
+        line = self.current[2].pop(0)
         self.write('> %s\n' % subprocess.list2cmdline(line))
-        self.status.set('running %s' % os.path.basename(line[1]))
+        self.status.set(self.state_line())
         self.stop_button['state'] = 'normal'
+        self.paint()
         try:
-            self.process = subprocess.Popen(line, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            self.process = subprocess.Popen(line, cwd=build.ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                             text=True, bufsize=1, encoding='utf-8', errors='replace',
                                             env=dict(os.environ, PYTHONUNBUFFERED='1'),  # lines as they're printed
                                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         except OSError as error:
             self.write('%s\n' % error)
-            self.finish('failed')
+            self.fail()
             return
         threading.Thread(target=self.read, args=(self.process,), daemon=True).start()
 
@@ -245,13 +234,18 @@ class App:
                 self.process = None
                 if item[0]:
                     self.write('exit code %d\n' % item[0])
-                    self.queue = []
-                    self.finish('failed')
+                    self.fail()
                 else:
                     self.next()
             else:
                 self.write(item)
         self.root.after(100, self.drain)
+
+    def fail(self):
+        if self.current:
+            self.failed.add(self.current[:2])
+        self.current, self.queue = None, []
+        self.finish('failed')
 
     def write(self, text):
         self.log.insert('end', text)
@@ -260,6 +254,7 @@ class App:
     def finish(self, status):
         self.status.set(status)
         self.stop_button['state'] = 'disabled'
+        self.paint()
 
     def stop(self):
         self.queue = []
@@ -271,10 +266,10 @@ class App:
                 self.process.kill()
             self.write('stopped\n')
 
-    def open_folder(self):
-        folder = self.project()
+    def open_folder(self, card):
+        folder = build.project(card)
         if not os.path.isdir(folder):
-            messagebox.showinfo('EDA', '%s has no project yet: run Schematic first' % self.component.get())
+            messagebox.showinfo('EDA', '%s has no project yet: run its Layout first' % card)
             return
         os.startfile(folder) if hasattr(os, 'startfile') else subprocess.Popen(['xdg-open', folder])
 

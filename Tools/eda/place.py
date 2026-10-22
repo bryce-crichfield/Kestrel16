@@ -15,6 +15,7 @@ In1 a GND plane and In2 a VCC plane, ready for routing. The best few placements 
 Candidates/1.kicad_pcb, 2, ... for route.py, which routes each and keeps the best.
 """
 import argparse
+import json
 import math
 import os
 import random
@@ -52,10 +53,12 @@ class Design:
             expr = sexpr.parse(file.read())
         self.parts = {}  # reference -> (value, footprint id, symbol path)
         self.blocks = {}  # reference -> the sheets it sits in, like "Shifter 16 > Bus Driver 16"
+        self.sheet_of = {}  # reference -> its sheet path as tstamps, unique to each instance
         for comp in find_all(find(expr, 'components'), 'comp'):
             sheet = find(find(comp, 'sheetpath'), 'tstamps')[1]
             path = sheet + find(comp, 'tstamps')[1]
             footprint = find(comp, 'footprint')
+            self.sheet_of[find(comp, 'ref')[1]] = sheet
             self.parts[find(comp, 'ref')[1]] = (find(comp, 'value')[1], footprint[1] if footprint else '', path)
             names = find(find(comp, 'sheetpath'), 'names')[1]
             named = [f[2] for f in find_all(find(comp, 'fields') or [], 'field') if len(f) > 2 and find(f, 'name')[1] == 'Block']
@@ -112,12 +115,31 @@ def pad_offsets(footprint, angle):
 # ---------------------------------------------------------------------------
 # The anneal
 
+def net_weight(pins):
+    """Small nets count fully, a k-pin net about 2/(k-1), so buses and clocks that span the board whatever the
+    placement don't drown out local wiring."""
+    return 1.0 if pins <= 3 else 2.0 / (pins - 1)
+
+
+def hierarchy_groups(design, chips, largest=0.5):
+    """(members, weight) for every sheet holding two or more chips, like R3 or R3's Port A: a pull that keeps a
+    block's chips together. Smaller blocks pull tighter. A sheet holding more than largest of the card's chips
+    (the card's top block) is left out: it would pull everything toward everything."""
+    found = {}
+    for chip in chips:
+        sheets = [s for s in design.sheet_of[chip].strip('/').split('/') if s]
+        for depth in range(1, len(sheets) + 1):
+            found.setdefault('/'.join(sheets[:depth]), []).append(chip)
+    return [(members, 1.0 / math.sqrt(len(members))) for members in found.values()
+            if 1 < len(members) <= largest * len(chips)]
+
+
 class Placer:
     """Chips in slots. fixed maps (reference, pad) to a point that never moves, like a header pin.
     Slots come in sizes: classes[i] is chip i's slot size, and slot_classes[s] is slot s's. A chip only
     moves to a slot of its own size."""
 
-    def __init__(self, chips, offsets, nets, fixed, centres, classes, slot_classes):
+    def __init__(self, chips, offsets, nets, fixed, centres, classes, slot_classes, groups=(), cohesion=1.0):
         self.chips, self.centres = chips, centres
         self.slots = len(centres)
         self.classes = classes
@@ -126,7 +148,7 @@ class Placer:
             self.class_slots.setdefault(size, []).append(slot)
         index = {chip: i for i, chip in enumerate(chips)}
         # A net is a list of (chip index or -1, dx, dy): a pin's offset from its slot centre, or a fixed point.
-        self.nets = []
+        self.nets, self.weights = [], []
         for pins in nets:
             net = []
             for reference, pad in pins:
@@ -136,6 +158,12 @@ class Placer:
                     net.append((-1,) + fixed[(reference, pad)])
             if len(net) > 1:
                 self.nets.append(net)
+                self.weights.append(net_weight(len(net)))
+        self.signals = len(self.nets)  # the real nets; after them, one virtual net per block joining its chips
+        if cohesion:
+            for members, weight in groups:
+                self.nets.append([(index[chip], 0.0, 0.0) for chip in members])
+                self.weights.append(weight * cohesion)
         self.chip_nets = [[] for _ in chips]
         for n, net in enumerate(self.nets):
             for chip in {pin[0] for pin in net if pin[0] >= 0}:
@@ -144,7 +172,7 @@ class Placer:
     def centre(self, slot):
         return self.centres[slot]
 
-    def hpwl(self, n):
+    def hpwl(self, n, weighted=True):
         xs, ys = [], []
         for chip, dx, dy in self.nets[n]:
             if chip >= 0:
@@ -154,7 +182,12 @@ class Placer:
             else:
                 xs.append(dx)
                 ys.append(dy)
-        return max(xs) - min(xs) + max(ys) - min(ys)
+        return (self.weights[n] if weighted else 1) * (max(xs) - min(xs) + max(ys) - min(ys))
+
+    def wirelength(self, slots):
+        """The plain half-perimeter wirelength (mm) of the real nets, unweighted, for a placement."""
+        self.slot_of = list(slots)
+        return sum(self.hpwl(n, False) for n in range(self.signals))
 
     def anneal(self, rng, moves, start=None):
         if start:
@@ -229,6 +262,15 @@ class Template:
             for pad in footprint.Pads():
                 at = pad.GetPosition()
                 self.pads[(reference, pad.GetNumber())] = (pcbnew.ToMM(at.x) - ox, pcbnew.ToMM(at.y) - oy)
+        # Rule areas that keep out footprints, like a fanout zone above the connectors: KiCad's own keepouts, so DRC
+        # checks them too. Each counts as its bounding box.
+        self.zones = []
+        for zone in board.Zones():
+            if zone.GetIsRuleArea() and zone.GetDoNotAllowFootprints():
+                box = zone.GetBoundingBox()
+                self.zones.append((pcbnew.ToMM(box.GetLeft()) - ox, pcbnew.ToMM(box.GetTop()) - oy,
+                                   pcbnew.ToMM(box.GetRight()) - ox, pcbnew.ToMM(box.GetBottom()) - oy))
+        self.keepouts += self.zones
 
     def match(self, design):
         """{design reference: template reference} for the design's parts already on the template, like the
@@ -494,7 +536,7 @@ def inventory(chips, slot_of, density):
 
 
 def place_project(directory, gap=(7.0, 4.0), density=1.4, runs=6, moves=None, seed=1, cli=None, candidates=5,
-                  template=None, packing='auto', vertical=False, label=None, back=False):
+                  template=None, packing='auto', vertical=False, label=None, back=False, cohesion=3.0):
     """Writes Candidates/1..N.kicad_pcb and <project>.kicad_pcb (a copy of the best); returns that path. label is
     (text, corner, angle, size) for the card's name in silkscreen, or None. gap is
     (along each chip, across it), so it suits chips on their sides or, with vertical, standing up."""
@@ -511,6 +553,8 @@ def place_project(directory, gap=(7.0, 4.0), density=1.4, runs=6, moves=None, se
     on_template = set(alias)
     for ref, t in sorted(alias.items()):
         print('  %s is the template\'s %s' % (ref, t) if ref != t else '  %s is on the template' % ref)
+    for x0, y0, x1, y1 in template.zones if template else ():
+        print('  keepout %.0f x %.0f mm at (%.0f, %.0f)' % (x1 - x0, y1 - y0, x0, y0))
     kinds = {kind: sorted((r for r in design.parts if design.kind(r) == kind and r not in on_template),
                           key=reference_order)
              for kind in ('chip', 'decoupling', 'bulk', 'header')}
@@ -591,7 +635,11 @@ def place_project(directory, gap=(7.0, 4.0), density=1.4, runs=6, moves=None, se
         fixed.update({(ref, pad): at for ref, t in alias.items() for (r, pad), at in template.pads.items() if r == t})
 
     signal_nets = [pins for net, pins in design.nets.items() if net.lstrip('/') not in POWER]
-    placer = Placer(chips, offsets, signal_nets, fixed, centres, [slot_of[c] for c in chips], slot_classes)
+    groups = hierarchy_groups(design, chips)
+    if cohesion:
+        print('  %d blocks pull their chips together (cohesion %g)' % (len(groups), cohesion))
+    placer = Placer(chips, offsets, signal_nets, fixed, centres, [slot_of[c] for c in chips], slot_classes,
+                    groups, cohesion)
     moves = moves or 4000 * len(chips)
     rng = random.Random(seed)
     results = []
@@ -599,8 +647,9 @@ def place_project(directory, gap=(7.0, 4.0), density=1.4, runs=6, moves=None, se
     for run in range(runs):
         cost, slots = placer.anneal(rng, moves)
         results.append((cost, slots))
-        print('  anneal %d of %d: wirelength %.0f mm (%.0f s)' % (run + 1, runs, cost, time.time() - start))
-    random_cost = sum(placer.anneal(random.Random(seed + run), 0)[0] for run in range(5)) / 5
+        print('  anneal %d of %d: score %.0f, wirelength %.0f mm (%.0f s)'
+              % (run + 1, runs, cost, placer.wirelength(slots), time.time() - start))
+    random_cost = sum(placer.wirelength(placer.anneal(random.Random(seed + run), 0)[1]) for run in range(5)) / 5
     results.sort()
     region = (EDGE, EDGE, width - EDGE, height - strip)
     results = [(cost, slots, centring([(placer.centre(s), slot_of[c]) for c, s in zip(chips, slots)], region,
@@ -608,7 +657,7 @@ def place_project(directory, gap=(7.0, 4.0), density=1.4, runs=6, moves=None, se
     print('%s: %d chips in %d slots (%s); best %.0f mm, random %.0f mm'
           % (name, len(chips), len(centres), ', '.join('%d of %g x %g' % (slot_classes.count(s), s[0], s[1])
                                                        for s in sorted(set(slot_classes))),
-             results[0][0], random_cost))
+             placer.wirelength(results[0][1]), random_cost))
 
     def write(slots, shift, path):
         write_board(design, kinds, sizes, offsets, placer, fixed_at, slots, width, height, path, template, alias,
@@ -625,7 +674,70 @@ def place_project(directory, gap=(7.0, 4.0), density=1.4, runs=6, moves=None, se
         write(slots, shift, os.path.join(folder, '%d.kicad_pcb' % (k + 1)))
     path = os.path.join(directory, name + '.kicad_pcb')
     write(*results[0][1:], path=path)
+    if alias:
+        write_pulls(design, alias, template, chips, placer, *results[0][1:], offsets,
+                    os.path.join(directory, name + '.pulls.json'))
     return path
+
+
+def renet(directory, cli=None):
+    """Puts the schematic's nets back on the pads of the boards already placed, without moving anything: for after
+    layout.py moves the card's connector pins, which only changes which net each connector pad has."""
+    name = os.path.basename(os.path.normpath(directory))
+    netlist = os.path.join(directory, name + '.net')
+    subprocess.run([cli or kicad_cli(), 'sch', 'export', 'netlist', '--format', 'kicadsexpr', '-o', netlist,
+                    os.path.join(directory, name + '.kicad_sch')], check=True, capture_output=True)
+    design = Design(netlist, find_kicad('share/kicad/footprints'))
+    pad_net = {(ref, pad): net for net, pins in design.nets.items() for ref, pad in pins}
+    folder = os.path.join(directory, 'Candidates')
+    boards = [os.path.join(directory, name + '.kicad_pcb')] + (sorted(
+        os.path.join(folder, f) for f in os.listdir(folder) if f.endswith('.kicad_pcb')) if os.path.isdir(folder) else [])
+    for path in boards:
+        if not os.path.isfile(path):
+            raise SystemExit('%s is not placed yet: run place.py without --renet first' % path)
+        board = pcbnew.LoadBoard(path)
+        changed = 0
+        for footprint in board.GetFootprints():
+            for pad in footprint.Pads():
+                want = pad_net.get((footprint.GetReference(), pad.GetNumber()), '')
+                if pad.GetNetname() == want:
+                    continue
+                item = board.FindNet(want) if want else None
+                if want and item is None:
+                    item = pcbnew.NETINFO_ITEM(board, want)
+                    board.Add(item)
+                if item is None:
+                    pad.SetNetCode(0)
+                else:
+                    pad.SetNet(item)
+                changed += 1
+        board.BuildConnectivity()
+        pcbnew.SaveBoard(path, board)
+        print('  %s: %d pads on new nets' % (os.path.relpath(path, directory), changed))
+
+
+def write_pulls(design, alias, template, chips, placer, slots, shift, offsets, path):
+    """For layout.py: each connector pin's place, and for each net on the connector where the chips on
+    it sit (their pads' centre), so the card's ports can be dealt to the pins nearest the chips that use them. In mm from the corner."""
+    at = {}
+    for chip, slot in zip(chips, slots):
+        x, y = (c + d for c, d in zip(placer.centre(slot), shift))
+        for pad, (dx, dy) in offsets[chip].items():
+            at[(chip, pad)] = (x + dx, y + dy)
+    net_of = {pin: net for net, pins in design.nets.items() for pin in pins}
+    pins, pulls = {}, {}
+    for ref, t in alias.items():
+        for (r, pad), xy in template.pads.items():
+            if r != t:
+                continue
+            pins['%s.%s' % (ref, pad)] = [round(v, 2) for v in xy]
+            net = net_of.get((ref, pad))
+            points = [at[p] for p in design.nets.get(net, []) if p in at]
+            if net and net.lstrip('/') not in POWER and points:
+                pulls[net] = [round(sum(p[i] for p in points) / len(points), 2) for i in (0, 1)]
+    with open(path, 'w', encoding='utf-8') as file:
+        json.dump({'pins': pins, 'pulls': pulls}, file, indent=1)
+    print('  -> %s (%d connector pins pulled by chips)' % (path, len(pulls)))
 
 
 def write_board(design, kinds, sizes, offsets, placer, fixed_at, best, width, height, path, template=None,
@@ -697,16 +809,23 @@ def main():
                         'the first clear corner)')
     parser.add_argument('--label-angle', type=float, default=0, help='label rotation in degrees (default 0)')
     parser.add_argument('--label-size', type=float, default=3.0, help='label text height in mm (default 3)')
+    parser.add_argument('--cohesion', type=float, default=3.0, help="how strongly each block's chips (a register, "
+                        'its ports) are pulled together; 0 turns it off (default 3)')
     parser.add_argument('--back-labels', action='store_true', help="each chip's part number, block and reference "
                         'mirrored on the back silkscreen too')
     parser.add_argument('--kicad-cli', help="exports the schematic's netlist (default: KiCad's own)")
+    parser.add_argument('--renet', action='store_true', help="don't place: put the schematic's nets on the boards "
+                        'already placed, after layout.py moves the connector pins')
     args = parser.parse_args()
+    if args.renet:
+        renet(args.project, args.kicad_cli)
+        return
     text = args.label or os.path.basename(os.path.normpath(args.project))
     label = None if text.lower() == 'none' else (text, args.label_corner, args.label_angle, args.label_size)
     gap = tuple(float(v) for v in args.gap.lower().split('x'))
     place_project(args.project, gap, args.density, args.runs, args.moves, args.seed, args.kicad_cli,
                   args.candidates, args.template, args.packing, args.vertical,
-                  label, args.back_labels)
+                  label, args.back_labels, args.cohesion)
 
 
 if __name__ == '__main__':

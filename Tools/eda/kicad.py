@@ -5,7 +5,8 @@
 Each component becomes a .kicad_sch file. A component used inside another becomes a hierarchical sheet,
 and one file serves every instance, so four Register 16s share one sheet with four sets of references.
 The top component is a card: its ports become global labels, and its backplane connectors, P1 and P2, are drawn with
-the card template's footprint. Their pins are left unconnected until a pin map assigns the ports to them.
+the card template's footprint. floorplan.py's pin map says which port goes on which connector pin, and which pins
+are GND and VCC; without one, the pins are left unconnected.
 
 Nothing is wired with lines. Every pin gets a label naming its net, and pins with the same label are
 connected. A net is named after its port if it has one, GND or VCC if it is tied there (power symbols),
@@ -49,6 +50,44 @@ CONNECTORS = ('P1', 'P2')  # two 96-pin connectors along the card's long edge
 # ERC findings the unmapped connector causes: the card's inputs drive nothing. Unwired inputs inside are tied to GND,
 # so an undriven pin can only be on a card input's net.
 UNMAPPED = {'pin_not_driven', 'label_dangling', 'global_label_dangling'}
+
+
+def pins_path(component):
+    """Where layout.py leaves a card's own pins, dealt by its placement."""
+    return os.path.join(HERE, '..', '..', 'Build', 'Cards', component + ' Pins.yaml')
+
+
+def load_floorplan(component, path=None, straight=False):
+    """(port -> pin like P1.b7, pin -> GND or VCC) for a card from floorplan.py's map, or None if the component is
+    on none. Without a path, the maps in Build/Cards are searched for the card (the component's name less "Card ").
+    The card's own pins from layout.py win over the map's, unless straight, or they no longer cover the same ports."""
+    found = find_floorplan(component, path)
+    if found is None or straight or not os.path.isfile(pins_path(component)):
+        return found
+    with open(pins_path(component), encoding='utf-8') as file:
+        own = yaml.safe_load(file) or {}
+    if set(own) != set(found[0]):
+        print('  %s is for other ports than the floorplan has now, so it is ignored: rerun layout.py'
+              % os.path.relpath(pins_path(component)))
+        return found
+    print('  pins from %s, dealt by placement' % os.path.relpath(pins_path(component)))
+    return own, found[1]
+
+
+def find_floorplan(component, path=None):
+    card = component[len('Card '):] if component.startswith('Card ') else component
+    folder = os.path.join(HERE, '..', '..', 'Build', 'Cards')
+    paths = [path] if path else sorted(os.path.join(folder, name) for name in os.listdir(folder)
+                                       if name.endswith(' Floorplan.yaml')) if os.path.isdir(folder) else []
+    for candidate in paths:
+        with open(candidate, encoding='utf-8') as file:
+            plan = yaml.safe_load(file)
+        if card in plan['cards']:
+            power = {pin: net for net, pins in plan['power'].items() for pin in pins}
+            return plan['cards'][card], power
+    if path:
+        raise SystemExit('%s has no card %s' % (path, card))
+    return None
 
 
 def sheet_name(node, siblings):
@@ -393,8 +432,17 @@ class Sheet:
     def connector(self):
         """The card's backplane connectors, P1 and P2 as on VME, right of the drawing: one unit per row. Their
         footprint matches the ones on the card template, so place.py hands the template's P1 and P2 these pads'
-        nets. Until a pin map says which port goes on which pin, every pin is left unconnected and the ports are
-        global labels only."""
+        nets. The floorplan's pin map puts each port's global label on its pin and power on the power pins; the
+        rest, and every pin without a map, are left unconnected."""
+        ports, power = self.project.floorplan or ({}, {})
+        directions = {pin: node.kind.lower() for node in self.component.ports('Input') + self.component.ports('Output')
+                      for pin in bits(node.label, node.width)}
+        if self.project.floorplan:
+            missing = sorted(set(directions) - set(ports))
+            if missing:
+                raise SystemExit('the floorplan has no pin for %s on %s: rerun floorplan.py after cards.py'
+                                 % (', '.join(missing[:5]), self.component.name))
+        on_pin = {pin: port for port, pin in ports.items() if port in directions}
         symbol = self.project.symbols.get(CONNECTOR[0])
         x = snap(self.right + SLOT)
         for k, (reference, unit) in enumerate((r, u) for r in CONNECTORS for u in range(1, symbol.units + 1)):
@@ -403,9 +451,21 @@ class Sheet:
             placed.reference = reference
             low = min(-y for u, _, y, _, _ in symbol.pins.values() if u == unit)
             placed.at = (placed.at[0], snap(MARGIN - low))  # its top pin on the margin
+            for number in symbol.unit_pins(unit):
+                pin = '%s.%s' % (reference, number)
+                if pin in on_pin:
+                    placed.logical[number] = ('port', on_pin[pin])
             self.place(placed)
             for number in symbol.unit_pins(unit):
-                self.no_connect(placed.pin_point(number)[0])
+                pin = '%s.%s' % (reference, number)
+                point, angle = placed.pin_point(number)
+                if pin in power:
+                    self.attach(('power', power[pin]), point, angle)
+                elif pin in on_pin:
+                    port = on_pin[pin]
+                    self.attach(('global', kicad_name(port), directions[port]), point, angle)
+                else:
+                    self.no_connect(point)
 
     def chip_cell(self, symbol):
         """Where the next mapped chip goes: in rows below the drawing, each row as tall as its tallest chip, so
@@ -501,9 +561,10 @@ class Sheet:
 # The project: every sheet, annotated per instance, written out
 
 class Project:
-    def __init__(self, top, library, parts, symbols):
+    def __init__(self, top, library, parts, symbols, floorplan=None):
         self.name = top
         self.library, self.parts, self.symbols = library, parts, symbols
+        self.floorplan = floorplan  # (port -> pin, pin -> power net) for the top card's connectors, or None
         self.sheets = {}
         self.instances = {}  # component -> [(path string, node-id path)]
         self.root_uuid = str(uuid.uuid5(NAMESPACE, 'root|' + top))
@@ -699,8 +760,8 @@ def check(project, directory, cli):
     subprocess.run([cli, 'sch', 'export', 'netlist', '--format', 'kicadsexpr', '-o', netlist_path, top],
                    check=True, capture_output=True)
     exported = read_kicad_netlist(netlist_path, project.pin_map)
-    # The top's ports are only labels until a pin map puts them on the connector, so its netlist can't show them.
-    source = {group for group in (frozenset(key for key in group if key[:2] != ('port', ()))
+    # Without a floorplan the top's ports are only labels, not on the connector, so its netlist can't show them.
+    source = {group for group in (frozenset(key for key in group if project.floorplan or key[:2] != ('port', ()))
                                   for group in flatten(project.library, project.name, project.parts)) if len(group) > 1}
     def describe(group):
         return ', '.join(sorted(key if isinstance(key, str) else 'port ' + key[2] if key[0] == 'port' else
@@ -722,7 +783,7 @@ def check(project, directory, cli):
         for sheet in json.load(file).get('sheets', []):
             for violation in sheet.get('violations', []):
                 severity = violation['severity']
-                if violation['type'] in UNMAPPED:
+                if violation['type'] in UNMAPPED and not project.floorplan:
                     severity = 'expected'  # the card's ports reach nothing until the connector's pins are mapped
                 key = (severity, violation['type'])
                 counts[key] = counts.get(key, 0) + 1
@@ -741,6 +802,10 @@ def main():
     parser.add_argument('--parts', default=os.path.join(HERE, 'parts.yaml'))
     parser.add_argument('--symbols', default=None, help="KiCad's symbol library directory")
     parser.add_argument('--kicad-cli', default=None)
+    parser.add_argument('--floorplan', help="floorplan.py's pin map (default: the one in Build/Cards that has "
+                        'this card, if any)')
+    parser.add_argument('--straight', action='store_true', help="the floorplan's pins even if layout.py has dealt "
+                        'the card its own')
     parser.add_argument('--check', action='store_true', help='round-trip the netlist through kicad-cli and run ERC')
     args = parser.parse_args()
 
@@ -750,7 +815,10 @@ def main():
     with open(args.parts, encoding='utf-8') as file:
         parts = yaml.safe_load(file)
     library = Library(args.components) if args.components else Library()
-    project = Project(args.component, library, parts, Symbols(symbols_dir))
+    floorplan = load_floorplan(args.component, args.floorplan, args.straight)
+    print('%s: %s' % (args.component, 'connector pins from the floorplan' if floorplan else
+                      'no floorplan has this card, so its connector is left unconnected'))
+    project = Project(args.component, library, parts, Symbols(symbols_dir), floorplan)
     directory = args.output or os.path.join(HERE, '..', '..', 'Build', 'KiCad', args.component)
     project.write(directory)
     print('%s: %d sheets, %d chips -> %s' % (args.component, len(project.sheets),
