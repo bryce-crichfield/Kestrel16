@@ -4,8 +4,11 @@ Run it with KiCad's own Python after place.py:
 
   "C:/Program Files/KiCad/9.0/bin/python.exe" Tools/eda/route.py "Build/KiCad/Register 16"
 
-Each placement in Candidates/ goes out as a Specctra DSN, with the inner layers marked as power so Freerouting routes
-only the front and back and reaches GND and VCC through the planes. Freerouting routes it headless and writes a
+Each placement in Candidates/ goes out as a Specctra DSN, with the inner layers that hold a plane marked as power so
+Freerouting routes the rest and reaches GND (and VCC, unless place.py --signal-layers 3 left In2 for signals)
+through the planes. Track widths, clearances and vias are the project's net classes (Default, Clock, Power; see
+kicad_env.NET_CLASSES), which kicad.py wrote into its .kicad_pro. With In2 a signal layer, VCC is routed as Power
+tracks and then In2's free space is poured with VCC. Freerouting routes it headless and writes a
 session (SES), which is imported back onto the board. The candidates are scored by unrouted connections, then vias,
 then track length; the best becomes <project>.kicad_pcb. KiCad's DRC checks it against the schematic, and the
 Gerbers, drill files and a BOM go to Fabrication/.
@@ -34,8 +37,6 @@ PLUGIN_JARS = os.path.join(os.path.expanduser('~'), 'Documents', 'KiCad', '*', '
                            'jar', 'freerouting-*.jar')
 COURSIER_JAVAS = os.path.join(os.path.expanduser('~'), 'AppData', 'Local', 'Coursier', 'cache', 'arc', '**', 'bin',
                               'java.exe')
-TRACK = 250      # um, trace width
-CLEARANCE = 200  # um
 GERBER_LAYERS = 'F.Cu,In1.Cu,In2.Cu,B.Cu,F.Mask,B.Mask,F.Silkscreen,B.Silkscreen,Edge.Cuts'
 
 
@@ -78,10 +79,45 @@ def find_java(path=None):
 # One candidate
 
 def prepare_dsn(text):
-    """Keeps Freerouting off the plane layers and sets the trace width and clearance."""
-    text = re.sub(r'(\(layer In\d+\.Cu\s*\(type )signal', r'\1power', text)
-    text = re.sub(r'\(width \d+(?:\.\d+)?\)', '(width %d)' % TRACK, text)
-    return re.sub(r'\(clearance \d+(?:\.\d+)?\)', '(clearance %d)' % CLEARANCE, text)
+    """Keeps Freerouting off the layers that hold a plane. The net classes' rules stay as KiCad wrote them, but
+    under their own names: KiCad calls a class a net falls in by pattern "Clock,Default"."""
+    for layer in set(re.findall(r'\(plane \S+ \(polygon (\S+)', text)):
+        text = re.sub(r'(\(layer %s\s*\(type )signal' % re.escape(layer), r'\1power', text)
+    return re.sub(r'\(class (\S+?),Default ', r'(class \1 ', text)
+
+
+def with_net_classes(board_path, project):
+    """Puts the project's .kicad_pro beside a board that has none, as <board>.kicad_pro, so pcbnew loads the board
+    with its net classes."""
+    own = os.path.splitext(board_path)[0] + '.kicad_pro'
+    if os.path.abspath(own) == os.path.abspath(project) or not os.path.isfile(project):
+        return
+    with open(project, encoding='utf-8') as file:
+        settings = json.load(file)
+    settings.setdefault('meta', {})['filename'] = os.path.basename(own)
+    with open(own, 'w', encoding='utf-8', newline='\n') as file:
+        json.dump(settings, file, indent=2)
+
+
+def pour_vcc(board):
+    """A VCC pour over In2 when it's a signal layer (no plane on it), to fill what the tracks leave."""
+    if any(z.GetLayer() == pcbnew.In2_Cu for z in board.Zones() if not z.GetIsRuleArea()):
+        return
+    net = board.FindNet('VCC') or board.FindNet('/VCC')
+    if net is None:
+        return
+    box = board.GetBoardEdgesBoundingBox()
+    zone = pcbnew.ZONE(board)
+    zone.SetLayer(pcbnew.In2_Cu)
+    zone.SetNet(net)
+    zone.SetLocalClearance(pcbnew.FromMM(0.3))
+    outline = zone.Outline()
+    outline.NewOutline()
+    for x, y in ((box.GetLeft(), box.GetTop()), (box.GetRight(), box.GetTop()), (box.GetRight(), box.GetBottom()),
+                 (box.GetLeft(), box.GetBottom())):
+        outline.Append(x, y)
+    outline.Outline(0).SetClosed(True)
+    board.Add(zone)
 
 
 def import_ses(board, path):
@@ -152,11 +188,13 @@ def score(board):
 PASS = re.compile(r'pass #(\d+) .*?\((\d+) unrouted\)')  # Freerouting's line for a finished pass
 
 
-def route(placed, folder, java, jar, passes, threads, timeout):
+def route(placed, folder, java, jar, passes, threads, timeout, project):
     """Routes one placed board into folder; returns (score, routed board path), or (None, None) if Freerouting
     stopped without a session."""
     stem = os.path.join(folder, os.path.splitext(os.path.basename(placed))[0])
     dsn, ses, routed = stem + '.dsn', stem + '.ses', stem + '.kicad_pcb'
+    with_net_classes(placed, project)
+    with_net_classes(routed, project)
     board = pcbnew.LoadBoard(placed)
     if not pcbnew.ExportSpecctraDSN(board, os.path.abspath(dsn)):
         raise SystemExit("can't export %s as DSN" % placed)
@@ -191,6 +229,7 @@ def route(placed, folder, java, jar, passes, threads, timeout):
         return None, None
     import_ses(board, ses)
     prune(board)
+    pour_vcc(board)
     board.Save(routed)
     return score(fill_zones(routed)), routed
 
@@ -246,7 +285,8 @@ def route_project(directory, java=None, jar=None, passes=25, threads=4, timeout=
     results = []
     for k, path in enumerate(placed):
         print('  routing %s (%d of %d)' % (os.path.basename(path), k + 1, len(placed)), flush=True)
-        result, routed = route(path, folder, java, jar, passes, threads, timeout)
+        result, routed = route(path, folder, java, jar, passes, threads, timeout,
+                               os.path.join(directory, name + '.kicad_pro'))
         if result is None:
             continue
         results.append((result, routed))

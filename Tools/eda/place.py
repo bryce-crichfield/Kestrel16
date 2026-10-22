@@ -11,7 +11,7 @@ The anneal swaps or moves chips to shorten the weighted half-perimeter of every 
 since they are the inner planes. Several independent anneals run. Then each 100nF cap goes beside a chip's VCC pin,
 the headers go along the bottom edge with the bulk cap (from the connector's side), the chips are centred on the
 board, and the board is written as <project>.kicad_pcb: 4 layers,
-In1 a GND plane and In2 a VCC plane, ready for routing. The best few placements are also written as
+In1 a GND plane and In2 a VCC plane (or, with --signal-layers 3, a third signal layer), ready for routing. The best few placements are also written as
 Candidates/1.kicad_pcb, 2, ... for route.py, which routes each and keeps the best.
 
 With --inflate N, up to N more rounds follow: congestion.py's estimate (pads blocking) of the best placement finds
@@ -419,8 +419,10 @@ class Board:
             text.SetTextAngleDegrees(angle)
             text.SetPosition(centre)
 
-    def planes(self):
-        for layer, plane in ((pcbnew.In1_Cu, 'GND'), (pcbnew.In2_Cu, 'VCC')):
+    def planes(self, signal_layers=2):
+        """In1 a GND plane, and In2 a VCC plane unless it's a third signal layer, VCC then being routed."""
+        planes = ((pcbnew.In1_Cu, 'GND'), (pcbnew.In2_Cu, 'VCC'))[:4 - signal_layers]
+        for layer, plane in planes:
             net = net_name(self.netcodes, plane)
             if not net:
                 continue
@@ -541,7 +543,7 @@ def centring(chips, region, obstacles):
 Layout = namedtuple('Layout', 'width height fixed fixed_at placer results slot_of')  # one round's placements
 
 
-def congestion_of(design, chips, offsets, layout, tile=2.54):
+def congestion_of(design, chips, offsets, layout, signal_layers, tile=2.54):
     """congestion.py's estimate of a layout's best placement, pads blocking, without writing a board:
     (overflow, peak, {chip: the 90th percentile utilisation over its slot})."""
     placer, (_, slots, shift) = layout.placer, layout.results[0]
@@ -552,10 +554,10 @@ def congestion_of(design, chips, offsets, layout, tile=2.54):
     nets = {}
     for net, pins in design.nets.items():
         points = [at[pin] for pin in pins if pin in at]
-        if net.lstrip('/') not in POWER and len(points) > 1:
+        if net.lstrip('/') not in POWER[:4 - signal_layers] and len(points) > 1:  # VCC needs tracks without its plane
             nets[net] = points
     pads = [(x - PAD / 2, y - PAD / 2, x + PAD / 2, y + PAD / 2) for x, y in at.values()]
-    grid = rudy((layout.width, layout.height), nets, tile, pads)
+    grid = rudy((layout.width, layout.height), nets, tile, pads, signal_layers)
     values = [u for row in grid for u in row]
     overflow = sum((u - BUSY) ** 2 for u in values if u > BUSY) * tile * tile
     peaks = {}
@@ -578,7 +580,8 @@ def inventory(chips, slot_of, density):
 
 
 def place_project(directory, gap=(7.0, 4.0), density=1.4, runs=6, moves=None, seed=1, cli=None, candidates=5,
-                  template=None, packing='auto', vertical=False, label=None, back=False, cohesion=3.0, inflate=0):
+                  template=None, packing='auto', vertical=False, label=None, back=False, cohesion=3.0, inflate=0,
+                  signal_layers=2):
     """Writes Candidates/1..N.kicad_pcb and <project>.kicad_pcb (a copy of the best); returns that path. label is
     (text, corner, angle, size) for the card's name in silkscreen, or None. gap is
     (along each chip, across it), so it suits chips on their sides or, with vertical, standing up."""
@@ -719,7 +722,7 @@ def place_project(directory, gap=(7.0, 4.0), density=1.4, runs=6, moves=None, se
 
     layout = lay(slot_sizes(grown))
     if inflate:
-        score = congestion_of(design, chips, offsets, layout)
+        score = congestion_of(design, chips, offsets, layout, signal_layers)
         print('  congestion: overflow %.0f, peak %.2f' % score[:2])
         for step in range(inflate):
             # Chips of one footprint and gap change together, by their median heat, so they keep sharing slots: on a
@@ -756,7 +759,7 @@ def place_project(directory, gap=(7.0, 4.0), density=1.4, runs=6, moves=None, se
                 print('  keeping the placement before')
                 break
             grown = trial
-            new = congestion_of(design, chips, offsets, attempt)
+            new = congestion_of(design, chips, offsets, attempt, signal_layers)
             print('  congestion: overflow %.0f, peak %.2f (was %.0f, %.2f)' % (new[:2] + score[:2]))
             if new[0] >= score[0]:
                 print('  no better: keeping the placement before')
@@ -767,7 +770,7 @@ def place_project(directory, gap=(7.0, 4.0), density=1.4, runs=6, moves=None, se
 
     def write(slots, shift, path):
         write_board(design, kinds, sizes, offsets, placer, fixed_at, slots, width, height, path, template, alias,
-                    shift, chip_angle, label, back)
+                    shift, chip_angle, label, back, signal_layers)
         print('  -> %s (%.0f x %.0f mm)' % (path, width, height))
 
     # The best few placements become candidates for route.py, which routes each and keeps the best.
@@ -847,7 +850,7 @@ def write_pulls(design, alias, template, chips, placer, slots, shift, offsets, p
 
 
 def write_board(design, kinds, sizes, offsets, placer, fixed_at, best, width, height, path, template=None,
-                alias=None, shift=(0, 0), chip_angle=CHIP_ANGLE, label=None, back=False):
+                alias=None, shift=(0, 0), chip_angle=CHIP_ANGLE, label=None, back=False, signal_layers=2):
     chips = kinds['chip']
     board = Board(design, width, height, template, alias)
     vcc = {}  # chip -> its VCC pad, in mm
@@ -882,7 +885,7 @@ def write_board(design, kinds, sizes, offsets, placer, fixed_at, best, width, he
         board.place(cap, (width - EDGE - (k + 0.5) * (sizes[cap][0] + CAP_GAP), height - EDGE), chip_angle)
     if label:
         board.label(*label)
-    board.planes()
+    board.planes(signal_layers)
     board.save(path)
 
 
@@ -919,6 +922,9 @@ def main():
                         'its ports) are pulled together; 0 turns it off (default 3)')
     parser.add_argument('--inflate', type=int, default=0, help="rounds that grow the congested chips' slots and "
                         'place again (default 0: none)')
+    parser.add_argument('--signal-layers', type=int, choices=(2, 3), default=2, help='2: In1 a GND plane and In2 '
+                        'a VCC plane; 3: In2 a third signal layer too, VCC routed as tracks, which route.py tops up '
+                        'with a VCC pour on In2 (default 2)')
     parser.add_argument('--back-labels', action='store_true', help="each chip's part number, block and reference "
                         'mirrored on the back silkscreen too')
     parser.add_argument('--kicad-cli', help="exports the schematic's netlist (default: KiCad's own)")
@@ -933,7 +939,7 @@ def main():
     gap = tuple(float(v) for v in args.gap.lower().split('x'))
     place_project(args.project, gap, args.density, args.runs, args.moves, args.seed, args.kicad_cli,
                   args.candidates, args.template, args.packing, args.vertical,
-                  label, args.back_labels, args.cohesion, args.inflate)
+                  label, args.back_labels, args.cohesion, args.inflate, args.signal_layers)
 
 
 if __name__ == '__main__':

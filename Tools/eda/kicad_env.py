@@ -9,6 +9,25 @@ import sys
 
 POWER = ('GND', 'VCC')
 
+# The board's net classes: (name, track, clearance, via diameter, via drill in mm, the net names in it). kicad.py
+# writes them into each project's .kicad_pro, which the board, route.py's DSN for Freerouting and DRC all read.
+# Default is every other net. Clock gets more room around it, against crosstalk; Power matters only once VCC is
+# routed (place.py --signal-layers 3), since a plane needs no tracks.
+NET_CLASSES = [
+    ('Default', 0.15, 0.15, 0.6, 0.3, ()),
+    ('Clock', 0.25, 0.25, 0.6, 0.3, ('CLK',)),
+    ('Power', 0.5, 0.2, 0.8, 0.4, POWER),
+]
+
+
+def net_settings():
+    """NET_CLASSES as a .kicad_pro's net_settings."""
+    classes = [{'name': name, 'track_width': track, 'clearance': clearance, 'via_diameter': via, 'via_drill': drill,
+                'priority': 2147483647 if name == 'Default' else k}
+               for k, (name, track, clearance, via, drill, _) in enumerate(NET_CLASSES)]
+    patterns = [{'netclass': name, 'pattern': net} for name, *_, nets in NET_CLASSES for net in nets]
+    return {'meta': {'version': 4}, 'classes': classes, 'netclass_patterns': patterns}
+
 
 def find_kicad(relative):
     """A file in KiCad's install, like 'bin/kicad-cli.exe' or 'share/kicad/symbols', or None. When this is

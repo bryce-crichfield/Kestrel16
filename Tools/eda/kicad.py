@@ -29,7 +29,7 @@ import uuid
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from kicad_env import find_kicad, kicad_cli  # noqa: E402
+from kicad_env import find_kicad, kicad_cli, net_settings  # noqa: E402
 from netlist import Library, bits  # noqa: E402
 import sexpr  # noqa: E402
 from sexpr import Sym, find, find_all  # noqa: E402
@@ -619,7 +619,8 @@ class Project:
             with open(os.path.join(directory, name + '.kicad_sch'), 'w', encoding='utf-8', newline='\n') as file:
                 file.write(sexpr.write(self._schematic(name, sheet)) + '\n')
         with open(os.path.join(directory, self.name + '.kicad_pro'), 'w', encoding='utf-8', newline='\n') as file:
-            json.dump({'meta': {'filename': self.name + '.kicad_pro', 'version': 1}}, file, indent=2)
+            json.dump({'meta': {'filename': self.name + '.kicad_pro', 'version': 1}, 'net_settings': net_settings()},
+                      file, indent=2)
         with open(os.path.join(directory, self.name + '.pins.json'), 'w', encoding='utf-8', newline='\n') as file:
             json.dump(self.pin_map, file, indent=0, sort_keys=True)
 
