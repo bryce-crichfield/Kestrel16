@@ -2,10 +2,10 @@
 
     python Tools/make_registers.py
 
-Chip-level parts, each exactly one 74HC chip so tools/eda/parts.yaml can place the real chip: Decoder 3to8 (a
-74HC138), Bus Driver 8 (a 74HC541), Register 8 (a 74HC377), Compare 8 (a 74HC688) and Nand 8 (a 74HC30). Built from them: Bus Driver 16, Word Register (two
-Register 8s), Register 16 (a Word Register plus four Bus Driver 8s) and Register File (eight Register 16s: R0-R7 with two read ports and one
-write port).
+Chip-level parts, each exactly one 74HC chip so tools/eda/parts_*.yaml can place the real chip: Decoder 3to8 (a
+74HC138), Bus Driver 8 (a 74HC541), Register 8 (a 74HC377), Compare 8 (a 74HC688), Nand 8 (a 74HC30) and Register
+File 4x4 (a 74HC670). Built from them: Bus Driver 16, Word Register (two Register 8s), Register 16 (a Word Register
+plus four Bus Driver 8s) and Register File (R0-R7 with two read ports and one write port, in sixteen 74HC670s).
 """
 from hdl import *
 
@@ -65,6 +65,35 @@ def make_nand_8():
         output('Y', ~all_of(A))
 
 
+def latch(enable, enable_not, d):
+    """A transparent latch from gates: Q follows d while enable is 1 and holds while it is 0. The d & Q term keeps Q
+    from glitching as enable falls."""
+    q = gate('Or')
+    node = int(q.split('.')[0])
+    (enable & d) >> Signal('%d.A' % node)
+    ((enable_not & q) | (d & q)) >> Signal('%d.B' % node)
+    return q
+
+
+def make_register_file_4x4():
+    with component('Register File 4x4',
+                   'Four 4-bit words, a 74HC670. Write: while /GW is 0 the word W picks takes D (a latch, not an '
+                   'edge: it follows D for as long as /GW stays 0). Read: Q shows the word R picks while /GR is 0, '
+                   'otherwise Q lets go; reading the word being written shows D.'):
+        D, W, R = bus_input('D', 4), bus_input('W', 2), bus_input('R', 2)
+        GW, GR = inputs('/GW', '/GR')
+        write = ~GW
+        W_not, R_not = [~w for w in W], [~r for r in R]
+        pick = lambda n, A, A_not: (A[0] if n & 1 else A_not[0]) & (A[1] if n & 2 else A_not[1])
+        words = []
+        for n in range(4):
+            enable = write & pick(n, W, W_not)
+            enable_not = ~enable
+            words.append([latch(enable, enable_not, d) for d in D])
+        read = [pick(n, R, R_not) for n in range(4)]
+        output('Q', [tristate(any_of(read[n] & words[n][bit] for n in range(4)), GR) for bit in range(4)])
+
+
 def make_word_register():
     with component('Word Register', '16-bit register with no read ports: Q is always its value. On the rising '
                                     'edge of CLK it loads D if /LOAD is 0. Two Register 8s (74HC377s).'):
@@ -99,30 +128,42 @@ def make_register_file():
     with component('Register File',
                    'R0-R7, 16 bits each. Two read ports: QA shows the register RA picks, QB the one RB picks, '
                    'all the time. One write port: on the rising edge of CLK, if WE is 1, the register W picks '
-                   'loads D.'):
+                   'takes D, ready by the next rising edge. Sixteen 74HC670s: two copies, A for RA and B for RB, '
+                   'each two banks (R0-R3, R4-R7) of four nibbles. A 670 writes while its /GW is low, like a latch, '
+                   'so the edge latches D, W and WE into a result register and the write happens from it while '
+                   'CLK is high: D stays put while a register being read is written, and nothing loops back.'):
         D, W = bus_input('D', 16), bus_input('W', 3)
         WE, CLK = inputs('WE', 'CLK')
         RA, RB = bus_input('RA', 3), bus_input('RB', 3)
 
-        def decoder(address, enable, name):
-            chip = Part('Decoder 3to8', name=name)
-            address >> chip.A
-            enable >> chip.E
-            return chip['/Y']
-
-        write, read_a, read_b = decoder(W, WE, 'Write select'), decoder(RA, high(), 'Read A select'), \
-            decoder(RB, high(), 'Read B select')
-        QA, QB = output('QA', width=16), output('QB', width=16)
-        for r in range(8):
-            register = Part('Register 16', name='R%d' % r)
-            D >> register.D
-            register.QA >> QA
-            register.QB >> QB
-            write[r] >> register['/LOAD']
-            read_a[r] >> register['/OEA']
-            read_b[r] >> register['/OEB']
+        latched = Bus()
+        for start, name in ((0, 'Result low'), (8, 'Result high'), (16, 'Result select')):
+            register = Part('Register 8', name=name)
+            bus(D, W, WE, [low()] * 4)[start:start + 8] >> register.D
+            low() >> register['/E']
             CLK >> register.CLK
+            latched += register.Q
+        D_q, W_q, WE_q = latched[:16], latched[16:19], latched[19]
 
+        # The write pulse: CLK's high half after the edge that latched the result, which holds still until the
+        # next rising edge, so the pulse ends with nothing changing under it. It starts two inverters after the
+        # edge, once the result register's new W has reached the 670s' address decoders.
+        late_clock = ~~CLK
+        strobe = WE_q & late_clock
+        bank_write = [nand(strobe, ~W_q[2]), nand(strobe, W_q[2])]  # each bank's /GW
+
+        QA, QB = output('QA', width=16), output('QB', width=16)
+        for read, Q, copy in ((RA, QA, 'A'), (RB, QB, 'B')):
+            bank_read = [read[2], ~read[2]]  # each bank's /GR
+            for bank in range(2):
+                for nibble in range(4):
+                    chip = Part('Register File 4x4', name='R%d-R%d %s%d' % (4 * bank, 4 * bank + 3, copy, nibble))
+                    D_q[4 * nibble:4 * nibble + 4] >> chip.D
+                    W_q[:2] >> chip.W
+                    bank_write[bank] >> chip['/GW']
+                    read[:2] >> chip.R
+                    bank_read[bank] >> chip['/GR']
+                    chip.Q >> Q[4 * nibble:4 * nibble + 4]
 
 if __name__ == '__main__':
     make_decoder()
@@ -131,7 +172,8 @@ if __name__ == '__main__':
     make_register_8()
     make_compare_8()
     make_nand_8()
+    make_register_file_4x4()
     make_word_register()
     make_register()
     make_register_file()
-    print('wrote Decoder 3to8, Bus Driver 8 and 16, Register 8, Compare 8, Nand 8, Word Register, Register 16 and Register File')
+    print('wrote Decoder 3to8, Bus Driver 8 and 16, Register 8, Compare 8, Nand 8, Register File 4x4, Word Register, Register 16 and Register File')

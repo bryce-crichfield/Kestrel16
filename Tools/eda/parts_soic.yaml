@@ -157,6 +157,11 @@ Terminal:                         # stands in for a UART; a header for now
     value: 74HC30
     footprint: Package_SO:SOIC-14_3.9x8.7mm_P1.27mm
     power: {VCC: 14, GND: 7}
+  hc670: &hc670                   # DIP in either file: the CD74HC670E is the one in stock
+    symbol: 74xx:74LS670
+    value: CD74HC670E
+    footprint: Package_DIP:DIP-16_W7.62mm
+    power: {VCC: 16, GND: 8}
   hc377: &hc377
     symbol: 74xx:74LS377
     value: 74HC377
@@ -199,6 +204,12 @@ Compare 8:                        # /EQ low when P = Q and /G is low
     - <<: *hc688
       pins: {/G: 1, P0: 2, Q0: 3, P1: 4, Q1: 5, P2: 6, Q2: 7, P3: 8, Q3: 9,
              P4: 11, Q4: 12, P5: 13, Q5: 14, P6: 15, Q6: 16, P7: 17, Q7: 18, /EQ: 19}
+
+Register File 4x4:               # /GW low writes D to word W (a latch); Q shows word R while /GR is low
+  chips:
+    - <<: *hc670
+      pins: {D0: 15, D1: 1, D2: 2, D3: 3, W0: 14, W1: 13, /GW: 12, R0: 5, R1: 4, /GR: 11,
+             Q0: 10, Q1: 9, Q2: 7, Q3: 6}
 
 Nand 8:                           # Y low when every A is high
   chips:
