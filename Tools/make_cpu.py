@@ -221,8 +221,8 @@ CONTROL = [('/XRF', 0), ('/XPC', 1), ('/XEPC', 1), ('/XT', 1), ('/XSH', 1), ('CS
            ('MREAD', 0), ('STORE', 0), ('WSTROBE', 0), ('WORD', 0), ('TICK', 0), ('HALTED', 0), ('ILLEGAL', 0)]
 CARD_SIGNALS = {
     'Control': ['/LDIR', 'WZN', 'WC', 'WV', 'RESTORE', 'SAVE', 'IESET', 'IECLR', 'HALTED', 'ILLEGAL'],
-    'Registers': ['/XRF', '/YRF', 'RFWE', 'RASYS', 'RBDEST', 'WSEL7'],
-    'ALU': ['OP0', 'OP1', 'OP2', 'OP3', 'CIN1', 'CINC', '/ZALU', '/XSH', 'CSH', '/YIMM', 'IMM0', 'IMM1', 'IMM2'],
+    'Registers': ['/XRF', '/YRF', 'RFWE', 'RASYS', 'RBDEST', 'WSEL7', '/YIMM', 'IMM0', 'IMM1', 'IMM2'],
+    'ALU': ['OP0', 'OP1', 'OP2', 'OP3', 'CIN1', 'CINC', '/ZALU', '/XSH', 'CSH'],
     'Datapath': ['/XPC', '/XEPC', '/XT', '/APC', '/AMAR', '/LDPC', '/LDMAR', '/LDEPC', '/LDT', 'PCINC'],
     'Memory': ['MREAD', 'MLOAD', 'STORE', 'WSTROBE', 'WORD', 'TICK'],
 }
@@ -554,6 +554,11 @@ def make_cpu():
             U, V = registers.QA, registers.QB  # the read ports, on U and V all the time
             x_rf = drive(U, selects['/XRF'], 'RA to X')
             y_rf = drive(V, selects['/YRF'], 'RB to Y')
+            immediate = Part('Immediate Unit', name='Immediate')  # here, as I and V already are, so it needs no pins
+            I[:12] >> immediate.IR
+            V[:8] >> immediate.OLD
+            bus(selects.IMM0, selects.IMM1, selects.IMM2) >> immediate.SEL
+            selects['/YIMM'] >> immediate['/OE']
             Z = registers.D  # the Z bus: the ALU's result or a load's data
 
         with card('ALU'):
@@ -565,11 +570,6 @@ def make_cpu():
             bus(operation.OP0, operation.OP1, operation.OP2, operation.OP3) >> alu.OP
             (operation.CIN1 | (operation.CINC & status.C)) >> alu.Cin
 
-            immediate = Part('Immediate Unit', name='Immediate')
-            I[:12] >> immediate.IR
-            V[:8] >> immediate.OLD
-            bus(operation.IMM0, operation.IMM1, operation.IMM2) >> immediate.SEL
-            operation['/YIMM'] >> immediate['/OE']
             immediate.Y >> Y
 
             shifter = Part('Shifter 16', name='Shifter')  # U by V, onto X, so a shift needs no ALU operand
