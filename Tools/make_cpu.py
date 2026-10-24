@@ -10,7 +10,8 @@ Parts (each its own component, most of them a familiar 74HC chip or two):
     Shifter 16          a barrel shifter: SHL, SHR or SAR by 0-15 in one pass, from Mux 2x4s
     Immediate Unit      the instruction's constants, one at a time onto the Y bus
     Status              the flags Z N C V, the interrupt enable, and their copies saved on an exception
-    Control Unit        a 5-bit state register and two microcode ROMs (Control A.bin, Control B.bin)
+    Control Unit        a 5-bit state register and two microcode ROMs (Control A.bin: the control code K,
+                        Control B.bin: the next state)
     Kestrel16 CPU       the datapath: register file, ALU, PC, IR, MAR, T, EPC and the buses between them
     Timer               an interrupt every N instructions, until acknowledged
     Interrupt Controller  the slots' interrupt requests, pending and mask registers, one INT to the CPU
@@ -29,6 +30,12 @@ cycle leaves the memory bus and PC alone (ALU ops, immediates, shifts, compares,
 that cycle also fetches the next instruction, so those instructions take one cycle. Loads, stores,
 jumps, taken branches and EI/DI/RETI/TRAP are followed by a FETCH cycle of their own. Shifts go
 through the barrel shifter in one cycle.
+The CPU's cards (Control, Registers, ALU, Datapath, Memory) share standard buses: X and Y (the ALU's operands),
+Z (its result, or a load's data, into the register file, PC, MAR, T and EPC), U and V (the register file's two
+read ports, all the time: the shifter, LHI and stores use them), A (the address), F (the fetch bus: memory data
+in, to the IR and the load lanes, so a fetch needs none of the others and overlaps execution), I (the IR, to
+every card) and K, the 8-bit control code: the microcode sends one code per distinct set of control signals and
+each card turns it back into its own with a decoder ROM (Decode <card>.bin).
 A store's write cycle drives the address and data while CLK is high and pulses /WE while it is low,
 so /WE ends at the rising edge, before the address can change.
 """
@@ -203,14 +210,25 @@ def make_status():
 
 # ---------------------------------------------------------------------------- control unit
 
-# Control signals, in ROM data-bit order, with their idle values. Names starting with / are
-# active-low enables and loads.
-CONTROL_A = [('/XRF', 0), ('/XPC', 1), ('/XEPC', 1), ('/XT', 1), ('/XSH', 1), ('CSH', 0), ('/YRF', 0), ('/YIMM', 1), ('/APC', 0),
-             ('/AMAR', 1), ('/WALU', 1), ('MLOAD', 0), ('/LDPC', 1), ('/LDMAR', 1), ('/LDEPC', 1), ('/LDT', 1),
-             ('/LDIR', 1), ('PCINC', 0), ('RFWE', 0), ('WSEL7', 0), ('RASYS', 0), ('RBDEST', 0), ('OP0', 0), ('OP1', 0),
-             ('OP2', 0), ('OP3', 0), ('CIN1', 0), ('CINC', 0), ('IMM0', 0), ('IMM1', 0), ('IMM2', 0)]
-CONTROL_B = [('WZN', 0), ('WC', 0), ('WV', 0), ('RESTORE', 0), ('SAVE', 0), ('IESET', 0), ('IECLR', 0),
-             ('MREAD', 0), ('STORE', 0), ('WSTROBE', 0), ('WORD', 0), ('TICK', 0), ('HALTED', 0), ('ILLEGAL', 0), ('N0', 0), ('N1', 0), ('N2', 0), ('N3', 0), ('N4', 0)]
+# Control signals with their idle values. Names starting with / are active-low enables and loads. The microcode
+# doesn't send them over the backplane: it sends the control code K, one per distinct set of them, and each
+# card's decoder ROM turns the code back into the signals that card uses (CARD_SIGNALS).
+CONTROL = [('/XRF', 0), ('/XPC', 1), ('/XEPC', 1), ('/XT', 1), ('/XSH', 1), ('CSH', 0), ('/YRF', 0), ('/YIMM', 1),
+           ('/APC', 0), ('/AMAR', 1), ('/ZALU', 0), ('MLOAD', 0), ('/LDPC', 1), ('/LDMAR', 1), ('/LDEPC', 1),
+           ('/LDT', 1), ('/LDIR', 1), ('PCINC', 0), ('RFWE', 0), ('WSEL7', 0), ('RASYS', 0), ('RBDEST', 0),
+           ('OP0', 0), ('OP1', 0), ('OP2', 0), ('OP3', 0), ('CIN1', 0), ('CINC', 0), ('IMM0', 0), ('IMM1', 0),
+           ('IMM2', 0), ('WZN', 0), ('WC', 0), ('WV', 0), ('RESTORE', 0), ('SAVE', 0), ('IESET', 0), ('IECLR', 0),
+           ('MREAD', 0), ('STORE', 0), ('WSTROBE', 0), ('WORD', 0), ('TICK', 0), ('HALTED', 0), ('ILLEGAL', 0)]
+CARD_SIGNALS = {
+    'Control': ['/LDIR', 'WZN', 'WC', 'WV', 'RESTORE', 'SAVE', 'IESET', 'IECLR', 'HALTED', 'ILLEGAL'],
+    'Registers': ['/XRF', '/YRF', 'RFWE', 'RASYS', 'RBDEST', 'WSEL7'],
+    'ALU': ['OP0', 'OP1', 'OP2', 'OP3', 'CIN1', 'CINC', '/ZALU', '/XSH', 'CSH', '/YIMM', 'IMM0', 'IMM1', 'IMM2'],
+    'Datapath': ['/XPC', '/XEPC', '/XT', '/APC', '/AMAR', '/LDPC', '/LDMAR', '/LDEPC', '/LDT', 'PCINC'],
+    'Memory': ['MREAD', 'MLOAD', 'STORE', 'WSTROBE', 'WORD', 'TICK'],
+}
+assert sorted(name for name, _ in CONTROL) == sorted(name for names in CARD_SIGNALS.values() for name in names)
+CODE_BITS = 8
+CODE = ['K%d' % bit for bit in range(CODE_BITS)]
 CONTROL_ADDRESS = ['S0', 'S1', 'S2', 'S3', 'S4', 'OP0', 'OP1', 'OP2', 'OP3', 'F0', 'F1', 'F2', 'F3', 'TAKE', 'IRQ']
 
 STATES = ['RESET', 'FETCH', 'FETCH2', 'E1', 'E2', 'E3', 'E4', 'INT1', 'INT2', 'HALT', 'ILLEGAL']
@@ -231,7 +249,7 @@ class Step:
     """One cycle's control signals, built up from idle values."""
 
     def __init__(self, next_state):
-        self.signals = dict(CONTROL_A + CONTROL_B)
+        self.signals = dict(CONTROL)
         self.next = S[next_state]
 
     def on(self, *names):
@@ -260,18 +278,20 @@ class Step:
             self.on('CINC')
         return self
 
-    def write_register(self, link=False):  # register file <- ALU
-        self.on('/WALU', 'RFWE')
+    def write_register(self, link=False):  # register file <- Z
+        self.on('RFWE')
         return self.on('WSEL7') if link else self
 
     def address_mar(self):  # memory address from MAR instead of PC
         self.signals['/APC'] = 1
         return self.on('/AMAR')
 
-    def word(self):
-        bits = [self.signals[name] for name, _ in CONTROL_A]
-        bits_b = [self.signals[name] for name, _ in CONTROL_B[:-5]] + [self.next >> bit & 1 for bit in range(5)]
-        return sum(bit << i for i, bit in enumerate(bits)), sum(bit << i for i, bit in enumerate(bits_b))
+    def memory_to_z(self):  # Z from the load lanes instead of the ALU
+        self.signals['/ZALU'] = 1
+        return self.on('MLOAD')
+
+    def key(self):  # the control signals, which the control code stands for
+        return tuple(self.signals[name] for name, _ in CONTROL)
 
 
 def fetch(tick, step=None):
@@ -343,7 +363,7 @@ def execute(state, opcode, function, take):
     if opcode in (Op['LoadWord'], Op['LoadByte']):  # MAR <- a + imm6, then register <- memory
         if state == 'E1':
             return Step('E2').x('RF').y_imm('IMM6').alu('ADD').on('/LDMAR')
-        step = Step('FETCH').address_mar().on('MREAD', 'MLOAD', 'RFWE')
+        step = Step('FETCH').address_mar().memory_to_z().on('MREAD', 'RFWE')
         return step.on('WORD') if opcode == Op['LoadWord'] else step
     if opcode in (Op['StoreWord'], Op['StoreByte']):  # MAR <- a + imm6, then a write cycle (/WE pulses while CLK is low)
         if state == 'E1':
@@ -404,28 +424,46 @@ def control(state, opcode, function, take, irq):
     return overlap(execute(name, opcode, function, take), irq)
 
 
+def write_image(name, image):
+    with open(os.path.join(COMPONENTS, name), 'wb') as file:
+        file.write(image)
+
+
 def make_control_images():
-    image_a, image_b = bytearray(), bytearray()
+    """The microcode ROMs, Control A.bin (the control code) and Control B.bin (the next state), and each card's
+    decoder ROM, Decode <card>.bin (the code in, that card's signals out). Codes are numbered in the order the
+    microcode first uses them; the codes no step uses decode to idle."""
+    codes, code_image, next_image = {}, bytearray(), bytearray()
     for address in range(1 << len(CONTROL_ADDRESS)):
         state, opcode, function = address & 31, (address >> 5) & 15, (address >> 9) & 15
         take, irq = (address >> 13) & 1, (address >> 14) & 1
-        word_a, word_b = control(state, opcode, function, take, irq).word()
-        image_a += word_a.to_bytes(4, 'little')
-        image_b += word_b.to_bytes(3, 'little')
-    for name, image in (('Control A.bin', image_a), ('Control B.bin', image_b)):
-        with open(os.path.join(COMPONENTS, name), 'wb') as file:
-            file.write(image)
+        step = control(state, opcode, function, take, irq)
+        code_image.append(codes.setdefault(step.key(), len(codes)))
+        next_image.append(step.next)
+    assert len(codes) <= 1 << CODE_BITS, '%d control words need more than %d code bits' % (len(codes), CODE_BITS)
+    write_image('Control A.bin', code_image)
+    write_image('Control B.bin', next_image)
+
+    words = [tuple(value for _, value in CONTROL)] * (1 << CODE_BITS)
+    for key, code in codes.items():
+        words[code] = key
+    index = {name: i for i, (name, _) in enumerate(CONTROL)}
+    for card_name, names in CARD_SIGNALS.items():
+        image = bytearray()
+        for word in words:
+            value = sum(word[index[name]] << bit for bit, name in enumerate(names))
+            image += value.to_bytes((len(names) + 7) // 8, 'little')
+        write_image('Decode %s.bin' % card_name, image)
+    return len(codes)
 
 
 def make_control_unit():
-    names_a = [name for name, _ in CONTROL_A]
-    names_b = [name for name, _ in CONTROL_B][:-5]
     with component('Control Unit',
-                   'The microcode sequencer: a 5-bit state register and two 32K-word ROMs, Control A.bin (31 '
-                   'bits) and Control B.bin (19 bits), both made by Tools/make_cpu.py. The ROMs see the state, '
-                   'the opcode, the function (IR2-0, or IR11-8 for SYS), TAKE (the branch condition holds) and '
-                   'IRQ; they give every control signal plus the next state, '
-                   'which loads on the rising edge of CLK. Power-up state 0 is RESET.'):
+                   'The microcode sequencer: a 5-bit state register and two 32K x 8 ROMs, Control A.bin (the '
+                   'control code K0-7) and Control B.bin (the next state), both made by Tools/make_cpu.py. The ROMs '
+                   'see the state, the opcode, the function (IR2-0, or IR11-8 for SYS), TAKE (the branch condition '
+                   'holds) and IRQ. The next state loads on the rising edge of CLK; power-up state 0 is RESET. Each '
+                   'card turns the code into its own control signals with a decoder ROM.'):
         IR = {i: inputs('IR%d' % i) for i in list(range(3)) + list(range(8, 16))}
         TAKE, IRQ, CLK = inputs('TAKE', 'IRQ', 'CLK')
 
@@ -436,15 +474,20 @@ def make_control_unit():
 
         state = [flip_flop(CLK) for _ in range(5)]
         address = bus([ff.Q for ff in state], [IR[12], IR[13], IR[14], IR[15]], function, TAKE, IRQ)
-        rom_a = rom(CONTROL_ADDRESS, names_a, image='Control A.bin')
-        rom_b = rom(CONTROL_ADDRESS, names_b + ['N0', 'N1', 'N2', 'N3', 'N4'], image='Control B.bin')
+        rom_a = rom(CONTROL_ADDRESS, CODE, image='Control A.bin')
+        rom_b = rom(CONTROL_ADDRESS, ['N0', 'N1', 'N2', 'N3', 'N4'], image='Control B.bin')
         for chip in (rom_a, rom_b):
             address >> [chip[name] for name in CONTROL_ADDRESS]
         rom_b.N >> [ff.D for ff in state]
-        for name in names_a:
-            output(name, rom_a[name])
-        for name in names_b:
-            output(name, rom_b[name])
+        output('K', rom_a.K)
+
+
+def decoder(card_name, code):
+    """card_name's decoder ROM, Decode <card>.bin: the control code in, CARD_SIGNALS[card_name] out. Make it inside
+    the card's block."""
+    chip = rom(CODE, CARD_SIGNALS[card_name], image='Decode %s.bin' % card_name)
+    code >> chip.K
+    return chip
 
 
 # ---------------------------------------------------------------------------- CPU
@@ -465,134 +508,139 @@ def condition_rows():
 def make_cpu():
     with component('Kestrel16 CPU',
                    'The Kestrel16 processor. Memory interface: A0-15 address, DO0-15 data out (driven only while '
-                   'storing), DI0-15 data in, /OE read strobe, /WEL and /WEH write strobes for the even (low) and '
-                   'odd (high) byte, low only while CLK is low; /WRL is /WEL for the whole write cycle, for parts that '
-                   'latch on the clock (the I/O write strobe). IRQ is the interrupt controller\'s request, TICK marks '
-                   'each instruction. HALTED: HALT ran (waiting for an interrupt); ILLEGAL: stopped on an illegal '
-                   'instruction.'):
+                   'storing), DI0-15 data in (the F bus), /OE read strobe, /WEL and /WEH write strobes for the even '
+                   '(low) and odd (high) byte, low only while CLK is low; /WRL is /WEL for the whole write cycle, for '
+                   'parts that latch on the clock (the I/O write strobe). IRQ is the interrupt controller\'s request, '
+                   'TICK marks each instruction. HALTED: HALT ran (waiting for an interrupt); ILLEGAL: stopped on an '
+                   'illegal instruction.'):
         CLK = inputs('CLK')
-        DI = bus_input('DI', 16)
+        F = bus_input('DI', 16)  # the fetch bus: memory data in, to the IR and the load lanes
         IRQ = inputs('IRQ')
+
         with card('Control'):
             c = Part('Control Unit', name='Control')
+            CLK >> c.CLK
+            K = c.K  # the control code, to every card's decoder
+            sequencer = decoder('Control', K)
+            ir = Part('Word Register', name='IR')
+            CLK >> ir.CLK
+            F >> ir.D
+            sequencer['/LDIR'] >> ir['/LOAD']
+            I = ir.Q  # the I bus: the instruction, to every card
+
+            status = Part('Status', name='Flags')
+            for name in ('WZN', 'WC', 'WV', 'RESTORE', 'SAVE', 'IESET', 'IECLR'):
+                sequencer[name] >> status[name]
+            CLK >> status.CLK
+            condition = rom(['C0', 'C1', 'C2', 'C3', 'Z', 'N', 'C', 'V'], ['TAKE'], rows=condition_rows())
+            I[8:12] >> [condition['C%d' % i] for i in range(4)]
+            for flag in 'ZNCV':
+                status[flag] >> condition[flag]
+            for i in list(range(3)) + list(range(8, 16)):
+                I[i] >> c['IR%d' % i]
+            condition.TAKE >> c.TAKE
+            (IRQ & status.IE) >> c.IRQ
+            output('HALTED', sequencer.HALTED)
+            output('ILLEGAL', sequencer.ILLEGAL)
+
+        with card('Registers'):
+            selects = decoder('Registers', K)
+            registers = Part('Register File', name='Registers')
+            CLK >> registers.CLK
+            selects.RFWE >> registers.WE
+            mux_bus(selects.RASYS, I[6:9], I[5:8], 'RA select') >> registers.RA
+            mux_bus(selects.RBDEST, I[3:6], I[9:12], 'RB select') >> registers.RB
+            mux_bus(selects.WSEL7, I[9:12], [high()] * 3, 'W select') >> registers.W  # WSEL7 picks R7, the link
+            U, V = registers.QA, registers.QB  # the read ports, on U and V all the time
+            x_rf = drive(U, selects['/XRF'], 'RA to X')
+            y_rf = drive(V, selects['/YRF'], 'RB to Y')
+            Z = registers.D  # the Z bus: the ALU's result or a load's data
+
+        with card('ALU'):
+            operation = decoder('ALU', K)
+            alu = Part('ALU 16', name='ALU')
+            X, Y = alu.A, alu.B  # the X and Y buses
+            x_rf >> X
+            y_rf >> Y
+            bus(operation.OP0, operation.OP1, operation.OP2, operation.OP3) >> alu.OP
+            (operation.CIN1 | (operation.CINC & status.C)) >> alu.Cin
+
+            immediate = Part('Immediate Unit', name='Immediate')
+            I[:12] >> immediate.IR
+            V[:8] >> immediate.OLD
+            bus(operation.IMM0, operation.IMM1, operation.IMM2) >> immediate.SEL
+            operation['/YIMM'] >> immediate['/OE']
+            immediate.Y >> Y
+
+            shifter = Part('Shifter 16', name='Shifter')  # U by V, onto X, so a shift needs no ALU operand
+            U >> shifter.A
+            V[:4] >> shifter.N
+            ~I[1] >> shifter.LEFT  # SHL 101, SHR 110, SAR 111
+            (I[1] & I[0]) >> shifter.ARITH
+            status.C >> shifter.CIN
+            operation['/XSH'] >> shifter['/OE']
+            shifter.Y >> X
+
+            for flag in 'ZNV':
+                alu[flag] >> status[flag + 'IN']
+            mux(operation.CSH, alu.C, shifter.C) >> status.CIN
+            z_alu = drive(alu.Y, operation['/ZALU'], 'ALU to Z')
+            z_alu >> Z
 
         with card('Datapath'):
+            path = decoder('Datapath', K)
+
             def register(name):  # one read port at most, so no Register 16's pair of them
                 part = Part('Word Register', name=name)
                 CLK >> part.CLK
                 return part
 
-            ir, mar, t, epc = (register(name) for name in ('IR', 'MAR', 'T', 'EPC'))
+            mar, t, epc = (register(name) for name in ('MAR', 'T', 'EPC'))
             pc = Part('Program Counter', name='PC')
             CLK >> pc.CLK
-            c.PCINC >> pc.INC
-            DI >> ir.D
-            c['/LDIR'] >> ir['/LOAD']
-            IR = ir.Q
-
-        with card('ALU'):
-            alu = Part('ALU 16', name='ALU')
+            path.PCINC >> pc.INC
             for part, load in ((pc, '/LDPC'), (mar, '/LDMAR'), (t, '/LDT'), (epc, '/LDEPC')):
-                alu.Y >> part.D
-                c[load] >> part['/LOAD']
-            # X bus (the ALU's A): register file, PC, EPC, T or the shifter. Y bus (its B): register file or
-            # immediate. Address bus: PC or MAR.
-            X, Y = alu.A, alu.B
-            c['/XPC'] >> pc['/OEA']
-            c['/APC'] >> pc['/OEB']
+                z_alu >> part.D
+                path[load] >> part['/LOAD']
+            path['/XPC'] >> pc['/OEA']
+            path['/APC'] >> pc['/OEB']
             pc.QA >> X
-        with card('Datapath'):
-            drive(t.Q, c['/XT'], 'T to X') >> X
-            drive(epc.Q, c['/XEPC'], 'EPC to X') >> X
-            address = drive(mar.Q, c['/AMAR'], 'MAR to A')  # the address bus, as a net MAR and PC both drive
+            drive(t.Q, path['/XT'], 'T to X') >> X
+            drive(epc.Q, path['/XEPC'], 'EPC to X') >> X
+            address = drive(mar.Q, path['/AMAR'], 'MAR to A')  # the A bus, as a net MAR and PC both drive
+            A = output('A', pc.QB)
+            address >> A
 
-        with card('Registers'):
-            # Register file and its address multiplexers.
-            registers = Part('Register File', name='Registers')
-            CLK >> registers.CLK
-            c.RFWE >> registers.WE
-            mux_bus(c.RASYS, IR[6:9], IR[5:8], 'RA select') >> registers.RA
-            mux_bus(c.RBDEST, IR[3:6], IR[9:12], 'RB select') >> registers.RB
-            mux_bus(c.WSEL7, IR[9:12], [high()] * 3, 'W select') >> registers.W  # WSEL7 picks R7, the link register
-            drive(registers.QA, c['/XRF'], 'RA to X') >> X
-            drive(registers.QB, c['/YRF'], 'RB to Y') >> Y
-
-        with card('ALU'):
-            immediate = Part('Immediate Unit', name='Immediate')
-            IR[:12] >> immediate.IR
-            registers.QB[:8] >> immediate.OLD
-            bus(c.IMM0, c.IMM1, c.IMM2) >> immediate.SEL
-            c['/YIMM'] >> immediate['/OE']
-            immediate.Y >> Y
-
-        with card('Control'):
-            # ALU control, flags and the branch condition.
-            status = Part('Status', name='Flags')
-            bus(c.OP0, c.OP1, c.OP2, c.OP3) >> alu.OP
-            (c.CIN1 | (c.CINC & status.C)) >> alu.Cin
-        with card('ALU'):
-            shifter = Part('Shifter 16', name='Shifter')
-            registers.QA >> shifter.A
-            shifter.Y >> X
-            registers.QB[:4] >> shifter.N
-            ~IR[1] >> shifter.LEFT  # SHL 101, SHR 110, SAR 111
-            (IR[1] & IR[0]) >> shifter.ARITH
-            status.C >> shifter.CIN
-            c['/XSH'] >> shifter['/OE']
-        with card('Control'):
-            for flag in 'ZNV':
-                alu[flag] >> status[flag + 'IN']
-            mux(c.CSH, alu.C, shifter.C) >> status.CIN
-            for name in ('WZN', 'WC', 'WV', 'RESTORE', 'SAVE', 'IESET', 'IECLR'):
-                c[name] >> status[name]
-            CLK >> status.CLK
-            condition = rom(['C0', 'C1', 'C2', 'C3', 'Z', 'N', 'C', 'V'], ['TAKE'], rows=condition_rows())
-            IR[8:12] >> [condition['C%d' % i] for i in range(4)]
-            for flag in 'ZNCV':
-                status[flag] >> condition[flag]
-
-            # Control unit inputs.
-            for i in list(range(3)) + list(range(8, 16)):
-                IR[i] >> c['IR%d' % i]
-            condition.TAKE >> c.TAKE
-            (IRQ & status.IE) >> c.IRQ
-            CLK >> c.CLK
-
-        with card('Datapath'):
+        with card('Memory'):
+            memory = decoder('Memory', K)
             # Byte lanes. A word uses both; a byte at an even address the low (even) lane, at an odd one the high.
-            word, a0 = c.WORD, address[0]
+            word, a0 = memory.WORD, address[0]
             even_ok = word | ~a0  # the low lane takes part
             odd_ok = word | a0
             byte_odd = ~word & a0
             byte = ~word
 
-            write_back = registers.D
-            drive(alu.Y, c['/WALU'], 'ALU to RF') >> write_back  # register file <- ALU
-
             def lane(sources, targets, enable_a, enable_b):
                 drive(sources, nand(enable_a, enable_b), 'Byte lane') >> targets
 
-            # Loads: register file <- the addressed byte(s), zero-extended for LB.
-            lane(DI[:8], write_back[:8], c.MLOAD, even_ok)  # low from low
-            lane(DI[8:], write_back[:8], c.MLOAD, byte_odd)  # low from high
-            lane(DI[8:], write_back[8:], c.MLOAD, word)  # high from high
-            lane([low()] * 8, write_back[8:], c.MLOAD, byte)  # high is zero
+            # Loads: Z <- the addressed byte(s), zero-extended for LB.
+            lane(F[:8], Z[:8], memory.MLOAD, even_ok)  # low from low
+            lane(F[8:], Z[:8], memory.MLOAD, byte_odd)  # low from high
+            lane(F[8:], Z[8:], memory.MLOAD, word)  # high from high
+            lane([low()] * 8, Z[8:], memory.MLOAD, byte)  # high is zero
 
-            A = output('A', pc.QB)
-            address >> A
-            # Stores: data out <- the register (port B), its low byte on the odd lane for SB to an odd address.
+            # Stores: data out <- V (the register RB picks), its low byte on the odd lane for SB to an odd address.
             DO = output('DO', width=16)
-            lane(registers.QB[:8], DO[:8], c.STORE, even_ok)  # low to low
-            lane(registers.QB[8:], DO[8:], c.STORE, word)  # high to high
-            lane(registers.QB[:8], DO[8:], c.STORE, byte_odd)  # low to high
+            lane(V[:8], DO[:8], memory.STORE, even_ok)  # low to low
+            lane(V[8:], DO[8:], memory.STORE, word)  # high to high
+            lane(V[:8], DO[8:], memory.STORE, byte_odd)  # low to high
 
             clock_low = ~CLK
-            output('/OE', ~c.MREAD)
-            output('/WEL', nand(c.WSTROBE & clock_low, even_ok))
-            output('/WEH', nand(c.WSTROBE & clock_low, odd_ok))
-            output('/WRL', nand(c.WSTROBE, even_ok))
-            for name in ('TICK', 'HALTED', 'ILLEGAL'):
-                output(name, c[name])
+            output('/OE', ~memory.MREAD)
+            output('/WEL', nand(memory.WSTROBE & clock_low, even_ok))
+            output('/WEH', nand(memory.WSTROBE & clock_low, odd_ok))
+            output('/WRL', nand(memory.WSTROBE, even_ok))
+            output('TICK', memory.TICK)
 
 
 # ---------------------------------------------------------------------------- I/O
